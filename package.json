@@ -1,0 +1,34 @@
+{
+  "name": "shrc",
+  "version": "1.0.0",
+  "description": "Anonymous IRC over SSH",
+  "main": "server/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "build": "vite build"
+  },
+  "keywords": [
+    "ssh",
+    "terminal",
+    "irc",
+    "tui",
+    "chat"
+  ],
+  "author": "shrc",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "ssh2": "^1.15.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
+    "vite": "^6.0.0"
+  }
+}

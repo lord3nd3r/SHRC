@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>shrc — irc</title>
+  <meta name="description" content="Anonymous IRC over SSH. No signup. Real channels, ops, and NickServ.">
+  <link rel="stylesheet" href="/src/style.css">
+  <script src="/socket.io/socket.io.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+</head>
+<body class="crt-active">
+  <div class="crt-overlay"></div>
+
+  <main class="container">
+    <header class="stagger stagger-1 masthead">
+      <div class="masthead-row">
+        <pre class="wordmark">shrc</pre>
+        <div id="live-status-badge" class="live-status">checking status…</div>
+      </div>
+      <p class="tagline">irc. anonymous until you say otherwise.</p>
+      <div class="meta-row">
+        <span>ssh in · zero signup</span>
+        <span class="dot-sep">·</span>
+        <button id="crt-toggle-btn" class="text-btn">toggle crt</button>
+      </div>
+    </header>
+
+    <section class="stagger stagger-2">
+      <button class="cmd-box" id="copy-ssh-btn" type="button" data-copy="ssh localhost -p 2222">
+        <div class="cmd-row">
+          <div class="cmd-text">
+            <span class="cmd-prompt">$</span>
+            <span>ssh localhost -p 2222</span>
+            <span class="cursor-blink">▌</span>
+          </div>
+          <span class="copy-badge" id="copy-badge-ssh">copy</span>
+        </div>
+        <div class="cmd-sub">any ssh client. no password. /nick to pick a name.</div>
+      </button>
+
+      <button class="cmd-box cmd-box-accent" type="button" onclick="window.openWebTerminal()">
+        <div class="cmd-row">
+          <div class="cmd-text accent">open the web client</div>
+          <span class="copy-badge">join →</span>
+        </div>
+        <div class="cmd-sub">same irc session, in the browser.</div>
+      </button>
+    </section>
+
+    <section class="stagger stagger-3 motd-block">
+      <div class="kicker"># motd</div>
+      <pre class="motd">welcome to shrc
+you start as Guest###### unless you ssh Frank@host
+the same ssh key auto-identifies the nick it registered
+/nick End3r then /identify   (30 seconds)
+/cs register                 keep founder/op/voice
+/ns /cs /ms /os              NickServ ChanServ MemoServ OperServ
+/help                        the rest</pre>
+    </section>
+
+    <section class="stagger stagger-4">
+      <div class="kicker"># this is irc</div>
+      <div class="feature-list">
+        <div class="feature-card">
+          <div class="feature-title">channels</div>
+          <div class="feature-desc">/join, /part, topic, names, whois, modes +ntmiblk. a channel exists when someone joins it.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-title">anonymous</div>
+          <div class="feature-desc">no account to idle or talk. registered nicks stay protected. opers can /kline a nick, ip, or key.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-title">ops</div>
+          <div class="feature-desc">first joiner of a new channel is op. then <span class="inline-cmd">/op userone</span> and <span class="inline-cmd">/deop user2</span>.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="stagger stagger-5">
+      <div class="kicker"># optional launcher</div>
+      <button class="cmd-box" type="button" data-copy="curl -fsSL https://shrc.live/install.sh | bash">
+        <div class="cmd-row">
+          <div class="cmd-text">
+            <span class="cmd-prompt">$</span>
+            <span>curl -fsSL https://shrc.live/install.sh | bash</span>
+          </div>
+          <span class="copy-badge" id="copy-badge-cli">copy</span>
+        </div>
+        <div class="cmd-sub">installs a local `shrc` that just runs ssh. plain ssh is enough.</div>
+      </button>
+    </section>
+
+    <footer>
+      <div>anonymous access is allowed. abuse is not — ops can kick, ban, and k-line.</div>
+    </footer>
+  </main>
+
+  <div class="terminal-modal-backdrop" id="terminal-modal">
+    <div class="terminal-window">
+      <div class="terminal-header">
+        <div class="window-dots">
+          <div class="dot dot-red" id="close-terminal-btn"></div>
+          <div class="dot dot-yellow"></div>
+          <div class="dot dot-green"></div>
+        </div>
+        <span class="term-title">shrc · irc</span>
+        <span class="term-hint">esc to close</span>
+      </div>
+      <div class="terminal-body">
+        <div id="xterm-container"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initTerminalClient } from '/src/terminal-client.js';
+
+    document.addEventListener('DOMContentLoaded', () => {
+      initTerminalClient('xterm-container', 'close-terminal-btn');
+
+      fetch('/status')
+        .then((r) => r.text())
+        .then((html) => {
+          const el = document.getElementById('live-status-badge');
+          if (el) el.innerHTML = html;
+        })
+        .catch(() => {});
+
+      document.getElementById('crt-toggle-btn')?.addEventListener('click', () => {
+        document.body.classList.toggle('crt-active');
+      });
+
+      document.querySelectorAll('[data-copy]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const text = btn.getAttribute('data-copy');
+          try { await navigator.clipboard.writeText(text); } catch {}
+          const badge = btn.querySelector('.copy-badge');
+          if (!badge) return;
+          const prev = badge.textContent;
+          badge.textContent = 'copied';
+          setTimeout(() => { badge.textContent = prev; }, 1600);
+        });
+      });
+    });
+  </script>
+</body>
+</html>
