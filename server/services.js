@@ -63,6 +63,7 @@ export function handleService(irc, client, buffer, service, text) {
   if (name === 'Memoserv') return memoServ(irc, client, buffer, text);
   if (name === 'Operserv') return operServ(irc, client, buffer, text);
   if (name === 'Botserv') return botServ(irc, client, buffer, text);
+  if (name === 'Hostserv') return hostServ(irc, client, buffer, text);
   return fail('shrc', 'No such service.');
 }
 
@@ -659,5 +660,132 @@ function botServ(irc, client, buffer, text) {
     }
     default:
       return fail(S, 'Unknown command. /bs help');
+  }
+}
+
+function validVhost(h) {
+  return /^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$/.test(String(h || '')) && !String(h).includes('..');
+}
+
+function hostServ(irc, client, buffer, text) {
+  const { cmd, rest, args } = splitArgs(text);
+  const S = 'HostServ';
+  if (!cmd || cmd === 'help') {
+    return notices(S, [
+      'REQUEST <vhost>          request a vhost (oper must activate)',
+      'ON                       enable your vhost',
+      'OFF                      show your real host',
+      'INFO [nick]              vhost status',
+      'SET <nick> <vhost>       (opers) assign immediately',
+      'DEL <nick>               (opers) remove a vhost',
+      'LIST                     (opers) all vhosts',
+      'WAITING                  (opers) pending requests',
+      'ACTIVATE <nick>          (opers) approve a request',
+      'REJECT <nick> [reason]   (opers) deny a request'
+    ]);
+  }
+
+  switch (cmd) {
+    case 'request': {
+      const err = needIdent(client, S);
+      if (err) return err;
+      const vhost = args[0];
+      if (!validVhost(vhost)) return fail(S, 'Invalid vhost. Use hostname characters, e.g. end3r.users.shrc');
+      const acc = state.getAccount(client.account);
+      acc.vhostPending = vhost;
+      state.onChange();
+      return notices(S, [`Vhost ${vhost} requested. An oper must /hs activate ${client.nick}.`]);
+    }
+    case 'on': {
+      const err = needIdent(client, S);
+      if (err) return err;
+      const acc = state.getAccount(client.account);
+      if (!acc.vhost) return fail(S, 'You have no vhost. /hs request <vhost> or ask an oper to /hs set.');
+      acc.vhostOn = true;
+      state.onChange();
+      return notices(S, [`Your vhost is now ${acc.vhost}`]);
+    }
+    case 'off': {
+      const err = needIdent(client, S);
+      if (err) return err;
+      const acc = state.getAccount(client.account);
+      acc.vhostOn = false;
+      state.onChange();
+      return notices(S, ['Vhost disabled. Your real host is visible again.']);
+    }
+    case 'info': {
+      const nick = args[0] || client.nick;
+      const acc = state.getAccount(nick);
+      if (!acc) return fail(S, `${nick} is not registered.`);
+      const hide = !client.oper && lower(nick) !== lower(client.account || '');
+      return notices(S, [
+        `${acc.nickname} vhost: ${acc.vhost || '(none)'} ${acc.vhostOn === false ? '(off)' : acc.vhost ? '(on)' : ''}`,
+        acc.vhostPending ? `Pending: ${acc.vhostPending}` : 'No pending request'
+      ].concat(hide ? [] : []));
+    }
+    case 'set': {
+      if (!client.oper) return fail(S, 'Access denied.');
+      if (args.length < 2) return fail(S, 'Syntax: SET <nick> <vhost>');
+      if (!validVhost(args[1])) return fail(S, 'Invalid vhost.');
+      const acc = state.getAccount(args[0]);
+      if (!acc) return fail(S, 'Nick is not registered.');
+      acc.vhost = args[1];
+      acc.vhostOn = true;
+      acc.vhostPending = null;
+      state.onChange();
+      const online = irc.findNick(args[0]);
+      if (online) irc.pushService(online, S, [`Your vhost is now ${args[1]}`]);
+      return notices(S, [`Set ${acc.nickname}'s vhost to ${args[1]}`]);
+    }
+    case 'del':
+    case 'delete': {
+      if (!client.oper) return fail(S, 'Access denied.');
+      const acc = state.getAccount(args[0]);
+      if (!acc) return fail(S, 'Nick is not registered.');
+      acc.vhost = '';
+      acc.vhostOn = false;
+      acc.vhostPending = null;
+      state.onChange();
+      return notices(S, [`Removed vhost from ${acc.nickname}`]);
+    }
+    case 'list': {
+      if (!client.oper) return fail(S, 'Access denied.');
+      const rows = Object.values(state.accounts)
+        .filter((a) => a.vhost)
+        .map((a) => `${a.nickname}  ${a.vhost}  ${a.vhostOn === false ? 'off' : 'on'}`);
+      return notices(S, rows.length ? rows : ['No vhosts set.']);
+    }
+    case 'waiting': {
+      if (!client.oper) return fail(S, 'Access denied.');
+      const rows = Object.values(state.accounts)
+        .filter((a) => a.vhostPending)
+        .map((a) => `${a.nickname}  ${a.vhostPending}`);
+      return notices(S, rows.length ? rows : ['No pending vhost requests.']);
+    }
+    case 'activate': {
+      if (!client.oper) return fail(S, 'Access denied.');
+      const acc = state.getAccount(args[0]);
+      if (!acc?.vhostPending) return fail(S, 'No pending request for that nick.');
+      acc.vhost = acc.vhostPending;
+      acc.vhostPending = null;
+      acc.vhostOn = true;
+      state.onChange();
+      const online = irc.findNick(args[0]);
+      if (online) irc.pushService(online, S, [`Your vhost ${acc.vhost} is now active.`]);
+      return notices(S, [`Activated ${acc.vhost} for ${acc.nickname}`]);
+    }
+    case 'reject': {
+      if (!client.oper) return fail(S, 'Access denied.');
+      const acc = state.getAccount(args[0]);
+      if (!acc) return fail(S, 'No such nick.');
+      const pending = acc.vhostPending;
+      acc.vhostPending = null;
+      state.onChange();
+      const online = irc.findNick(args[0]);
+      if (online) irc.pushService(online, S, [`Your vhost request (${pending}) was rejected. ${args.slice(1).join(' ')}`]);
+      return notices(S, [`Rejected ${acc.nickname}'s vhost request.`]);
+    }
+    default:
+      return fail(S, 'Unknown command. /hs help');
   }
 }

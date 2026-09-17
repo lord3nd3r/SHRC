@@ -26,6 +26,7 @@ Web client: http://localhost:3000
 | `/ms` | MemoServ — send / read / del |
 | `/os` | OperServ — kill, akill, global (opers) |
 | `/bs` | BotServ — assign a bot, fantasy `!op` `!kick` |
+| `/hs` | HostServ — vhosts (`/hs request`, `/hs set`) |
 
 Channel prefixes: `~` founder  `&` admin  `@` op  `%` halfop  `+` voice
 

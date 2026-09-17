@@ -52,25 +52,35 @@ export function createSSHServer(port = 2222) {
     let authenticatedUser = null;
     const ip = clientIp(client);
 
+    let noneTries = 0;
+
     client.on('authentication', (ctx) => {
-      if (ctx.method !== 'none' && ctx.method !== 'publickey') {
-        return ctx.reject(['publickey', 'none']);
+      if (ctx.method === 'publickey' && ctx.key && ctx.key.data) {
+        const fp = computeFingerprint(ctx.key.data);
+        authenticatedUser = {
+          username: suggestedNick(ctx.username),
+          fingerprint: fp,
+          ip
+        };
+        return ctx.accept();
       }
 
-      let fp = 'anon:' + crypto.randomBytes(3).toString('hex');
-      if (ctx.key && ctx.key.data) {
-        fp = computeFingerprint(ctx.key.data);
+      if (ctx.method === 'none') {
+        noneTries++;
+        if (noneTries === 1 && !authenticatedUser) {
+          return ctx.reject(['publickey', 'none']);
+        }
+        if (!authenticatedUser) {
+          authenticatedUser = {
+            username: suggestedNick(ctx.username),
+            fingerprint: 'anon:' + crypto.randomBytes(3).toString('hex'),
+            ip
+          };
+        }
+        return ctx.accept();
       }
 
-      const nick = suggestedNick(ctx.username);
-
-      authenticatedUser = {
-        username: nick,
-        fingerprint: fp,
-        ip
-      };
-
-      return ctx.accept();
+      return ctx.reject(['publickey', 'none']);
     });
 
     client.on('ready', () => {

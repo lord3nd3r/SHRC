@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { state, normalizeChannel, isValidNick, verifyPassword, normalizeChanRecord } from './state.js';
 import { handleService, flagRank, splitArgs } from './services.js';
 
-const RESERVED = new Set(['nickserv', 'chanserv', 'operserv', 'memoserv', 'botserv', 'shrc', 'server', '*server*', 'admin']);
+const RESERVED = new Set(['nickserv', 'chanserv', 'operserv', 'memoserv', 'botserv', 'hostserv', 'shrc', 'server', '*server*', 'admin']);
 const FLOOD_WINDOW_MS = 5000;
 const FLOOD_MAX = 8;
 const ENFORCE_MS = 30000;
@@ -11,7 +11,7 @@ const MOTD = [
   'guests are Guest######. ssh Frank@host claims Frank.',
   'your ssh key auto-identifies a registered nick bound to it.',
   'else /nick End3r then /identify (30 seconds) or you get renamed.',
-  'services: /ns /cs /ms /os /bs  (NickServ ChanServ MemoServ OperServ BotServ)',
+  'services: /ns /cs /ms /os /bs /hs',
   '/cs register  to keep founder/op/voice across reconnects.',
   '/help for the rest.  /quit or Ctrl+C to leave.'
 ];
@@ -34,8 +34,20 @@ function identFromFp(fp) {
   return (cleaned.slice(-12) || 'anon').slice(0, 12);
 }
 
+export function isSshKeyFingerprint(fp) {
+  return String(fp || '').startsWith('SHA256:');
+}
+
+function visibleHost(client) {
+  if (client.identified) {
+    const acc = state.getAccount(client.account);
+    if (acc?.vhost && acc.vhostOn !== false) return acc.vhost;
+  }
+  return client.ip || '0.0.0.0';
+}
+
 function hostmask(client) {
-  return `${client.nick}!${client.ident}@${client.ip || '0.0.0.0'}`;
+  return `${client.nick}!${client.ident}@${visibleHost(client)}`;
 }
 
 function matchMask(mask, client) {
@@ -155,8 +167,8 @@ export class IrcNetwork {
 
   accountByFingerprint(fingerprint) {
     const fp = String(fingerprint || '');
-    if (!fp || fp.startsWith('web:') || fp.startsWith('anon:')) return null;
-    const hits = Object.values(state.accounts).filter((a) => a.fingerprint && a.fingerprint === fp);
+    if (!isSshKeyFingerprint(fp)) return null;
+    const hits = Object.values(state.accounts).filter((a) => a.fingerprint === fp);
     if (!hits.length) return null;
     return hits.sort((a, b) => (a.registeredAt || 0) - (b.registeredAt || 0))[0];
   }
@@ -252,6 +264,13 @@ export class IrcNetwork {
           timestamp: Date.now()
         });
       }
+    } else if (nick && state.isNickProtected(nick) && isSshKeyFingerprint(fp)) {
+      extraNotices.push({
+        type: 'notice',
+        author: 'NickServ',
+        text: `${nick} is registered. /identify <password> to bind this SSH key for next time.`,
+        timestamp: Date.now()
+      });
     }
 
     client.ident = identFromFp(client.fingerprint);
@@ -1147,6 +1166,7 @@ export class IrcNetwork {
           '/os /operserv         KILL AKILL GLOBAL MODE OPER (opers)',
           '/bs /botserv          ASSIGN UNASSIGN SAY ACT SET FANTASY',
           '                      in-channel: !op !kick !voice !topic',
+          '/hs /hostserv         REQUEST ON OFF SET (vhosts)',
           '/msg NickServ IDENTIFY <pass>',
           'SSH key auto-identifies a nick registered with that key.',
           '--- channel ops ---',
@@ -1197,7 +1217,7 @@ export class IrcNetwork {
         if (args.length < 2) return fail('Usage: /msg <nick|#channel> <text>');
         const tgt = args[0];
         const text = rest.slice(args[0].length).trim();
-        const svc = { nickserv: 'NickServ', ns: 'NickServ', chanserv: 'ChanServ', cs: 'ChanServ', memoserv: 'MemoServ', ms: 'MemoServ', operserv: 'OperServ', os: 'OperServ', botserv: 'BotServ', bs: 'BotServ' }[lower(tgt)];
+        const svc = { nickserv: 'NickServ', ns: 'NickServ', chanserv: 'ChanServ', cs: 'ChanServ', memoserv: 'MemoServ', ms: 'MemoServ', operserv: 'OperServ', os: 'OperServ', botserv: 'BotServ', bs: 'BotServ', hostserv: 'HostServ', hs: 'HostServ' }[lower(tgt)];
         if (svc) return handleService(this, client, currentBuffer, svc, text);
         return this.privmsg(client, tgt, text);
       }
@@ -1221,6 +1241,10 @@ export class IrcNetwork {
       case 'bs':
       case 'botserv':
         return handleService(this, client, currentBuffer, 'BotServ', rest || 'help');
+
+      case 'hs':
+      case 'hostserv':
+        return handleService(this, client, currentBuffer, 'HostServ', rest || 'help');
 
       case 'query':
       case 'q': {
@@ -1282,6 +1306,10 @@ export class IrcNetwork {
           `idle ${idle}s, signed on ${Math.floor((Date.now() - t.connectedAt) / 1000)}s ago`
         ];
         if (client.oper) lines.push(`ip ${t.ip}  fp ${t.fingerprint}`);
+        else {
+          const acc = t.identified ? state.getAccount(t.account) : null;
+          if (acc?.vhost && acc.vhostOn !== false) lines.push(`vhost ${acc.vhost}`);
+        }
         return infoLines(lines);
       }
 
@@ -1345,6 +1373,7 @@ export class IrcNetwork {
           const acc = state.getAccount(client.nick);
           client.oper = !!(acc && acc.isOper);
           this.clearEnforce(client);
+          if (acc && isSshKeyFingerprint(client.fingerprint)) acc.fingerprint = client.fingerprint;
         }
         return res.success ? ok({ status: res.message }) : fail(res.message);
       }
@@ -1358,10 +1387,11 @@ export class IrcNetwork {
           client.account = client.nick;
           client.oper = !!(res.account && res.account.isOper);
           this.clearEnforce(client);
-          if (client.fingerprint && !client.fingerprint.startsWith('web:') && !client.fingerprint.startsWith('anon:')) {
-            res.account.fingerprint = client.fingerprint;
-          }
           const extra = [];
+          if (isSshKeyFingerprint(client.fingerprint)) {
+            res.account.fingerprint = client.fingerprint;
+            extra.push('This SSH key is now bound to your nick. Reconnect will auto-identify.');
+          }
           for (const ch of [...client.channels]) this.applyAccess(client, ch);
           const ajoin = res.account.ajoin || [];
           for (const ch of ajoin) {
@@ -1395,6 +1425,7 @@ export class IrcNetwork {
         client.account = args[0];
         client.oper = !!(res.account && res.account.isOper);
         this.clearEnforce(client);
+        if (res.account && isSshKeyFingerprint(client.fingerprint)) res.account.fingerprint = client.fingerprint;
         return this.changeNick(client, args[0]);
       }
 
