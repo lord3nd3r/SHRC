@@ -1,8 +1,8 @@
 import crypto from 'crypto';
 import { state, normalizeChannel, isValidNick, verifyPassword, normalizeChanRecord } from './state.js';
-import { handleService, flagRank } from './services.js';
+import { handleService, flagRank, splitArgs } from './services.js';
 
-const RESERVED = new Set(['nickserv', 'chanserv', 'operserv', 'memoserv', 'shrc', 'server', '*server*', 'admin']);
+const RESERVED = new Set(['nickserv', 'chanserv', 'operserv', 'memoserv', 'botserv', 'shrc', 'server', '*server*', 'admin']);
 const FLOOD_WINDOW_MS = 5000;
 const FLOOD_MAX = 8;
 const ENFORCE_MS = 30000;
@@ -11,7 +11,7 @@ const MOTD = [
   'guests are Guest######. ssh Frank@host claims Frank.',
   'your ssh key auto-identifies a registered nick bound to it.',
   'else /nick End3r then /identify (30 seconds) or you get renamed.',
-  'services: /ns  /cs  /ms  /os   (NickServ ChanServ MemoServ OperServ)',
+  'services: /ns /cs /ms /os /bs  (NickServ ChanServ MemoServ OperServ BotServ)',
   '/cs register  to keep founder/op/voice across reconnects.',
   '/help for the rest.  /quit or Ctrl+C to leave.'
 ];
@@ -257,7 +257,7 @@ export class IrcNetwork {
     client.ident = identFromFp(client.fingerprint);
     this.clients.set(id, client);
     this.nicks.set(lower(client.nick), client);
-    state.stats.activeUsers = this.clients.size;
+    state.stats.activeUsers = this.humanCount();
     state.stats.totalConnections++;
     state.scheduleSave();
     const nickserv = client.identified ? extraNotices : extraNotices.concat(this.syncEnforce(client));
@@ -277,7 +277,7 @@ export class IrcNetwork {
       this.nicks.delete(lower(client.nick));
     }
     this.flood.delete(id);
-    state.stats.activeUsers = this.clients.size;
+    state.stats.activeUsers = this.humanCount();
     state.scheduleSave();
     state.onChange();
   }
@@ -427,12 +427,184 @@ export class IrcNetwork {
     return list;
   }
 
+  humanCount() {
+    let n = 0;
+    for (const c of this.clients.values()) if (!c.isBot) n++;
+    return n;
+  }
+
   occupiedChannelCount() {
     const names = new Set();
     for (const c of this.clients.values()) {
+      if (c.isBot) continue;
       for (const ch of c.channels) names.add(ch);
     }
     return names.size;
+  }
+
+  spawnBot(def) {
+    const nick = def.nick;
+    const existing = this.findNick(nick);
+    if (existing) {
+      if (existing.isBot) return existing;
+      return null;
+    }
+    const client = {
+      id: 'bot-' + lower(nick),
+      nick,
+      fingerprint: 'bot:' + lower(nick),
+      ip: def.host || 'services.shrc',
+      ident: def.ident || 'bot',
+      realname: def.realname || 'bot',
+      channels: new Set(),
+      queries: new Set(),
+      identified: true,
+      account: nick,
+      oper: false,
+      isBot: true,
+      away: null,
+      ignores: new Set(),
+      connectedAt: Date.now(),
+      lastActive: Date.now(),
+      onKill: () => {}
+    };
+    this.clients.set(client.id, client);
+    this.nicks.set(lower(nick), client);
+    return client;
+  }
+
+  botJoin(bot, channel, quiet = false) {
+    const key = normalizeChannel(channel);
+    const ch = state.ensureChannel(key);
+    if (bot.channels.has(key)) return;
+    bot.channels.add(key);
+    if (!ch.ops.includes(lower(bot.nick))) ch.ops.push(lower(bot.nick));
+    if (!quiet) {
+      this._announce(key, 'join', bot.nick, `${bot.nick} [${bot.ident}@${bot.ip}] has joined ${key}`, {
+        fingerprint: bot.fingerprint
+      });
+    }
+  }
+
+  botPart(bot, channel) {
+    const key = normalizeChannel(channel);
+    if (!bot.channels.has(key)) return;
+    bot.channels.delete(key);
+    const ch = state.channels[key];
+    if (ch) {
+      ch.ops = (ch.ops || []).filter((n) => n !== lower(bot.nick));
+    }
+    this._announce(key, 'part', bot.nick, `${bot.nick} has left ${key} (unassigned)`, { fingerprint: bot.fingerprint });
+  }
+
+  botSpeak(channel, text, type = 'privmsg') {
+    const key = normalizeChannel(channel);
+    const ch = state.channels[key];
+    const botName = ch?.botserv?.bot;
+    if (!botName) return fail('No bot assigned to that channel.');
+    const bot = this.findNick(botName);
+    if (!bot || !bot.isBot) return fail('Bot is not online.');
+    state.addChatMessage(key, bot.nick, bot.fingerprint, sanitize(text, 400), { type });
+    return ok({ status: 'Said.' });
+  }
+
+  bootBots() {
+    if (!state.bots.HelpBot) {
+      state.bots.HelpBot = {
+        nick: 'HelpBot',
+        ident: 'bot',
+        host: 'services.shrc',
+        realname: 'a helpful robot',
+        createdBy: 'shrc'
+      };
+    }
+    for (const def of Object.values(state.bots)) {
+      this.spawnBot(def);
+    }
+    for (const ch of Object.values(state.channels)) {
+      const name = ch.botserv?.bot;
+      if (!name) continue;
+      const bot = this.findNick(name);
+      if (bot && bot.isBot) this.botJoin(bot, ch.name, true);
+    }
+    state.stats.activeUsers = this.humanCount();
+  }
+
+  handleFantasy(client, channel, body) {
+    const ch = state.channels[channel];
+    if (!ch?.botserv?.bot || ch.botserv.fantasy === false) return;
+    if (client.isBot) return;
+    const bot = this.findNick(ch.botserv.bot);
+    if (!bot || !bot.isBot) return;
+    const parsed = splitArgs(body.slice(1));
+    const cmd = parsed.cmd;
+    const args = parsed.args;
+    const targetNick = args[0] || client.nick;
+    const asBotNotice = (text) => {
+      state.addChatMessage(channel, bot.nick, bot.fingerprint, text, { type: 'notice' });
+    };
+
+    const need = (rank) => {
+      if (this.accessRank(client, channel) >= rank || client.oper) return true;
+      asBotNotice(`${client.nick}: permission denied.`);
+      return false;
+    };
+
+    const protectedKick = (who) => {
+      const t = this.findNick(who);
+      if (!t) return false;
+      if (t.isBot) return true;
+      if (ch.botserv.dontkickops && this.isOp(t, channel)) return true;
+      if (ch.botserv.dontkickvoices && this.isVoice(t, channel) && !this.isOp(t, channel)) return true;
+      return false;
+    };
+
+    switch (cmd) {
+      case 'op':
+        if (!need(30)) return;
+        this.setOp(client, channel, targetNick, true);
+        return;
+      case 'deop':
+        if (!need(40)) return;
+        this.setOp(client, channel, targetNick, false);
+        return;
+      case 'voice':
+        if (!need(30)) return;
+        this.setVoice(client, channel, targetNick, true);
+        return;
+      case 'devoice':
+        if (!need(30)) return;
+        this.setVoice(client, channel, targetNick, false);
+        return;
+      case 'hop':
+      case 'halfop':
+        if (!need(40)) return;
+        this.setFlags(client, channel, targetNick, '+H');
+        return;
+      case 'kick':
+        if (!need(30)) return;
+        if (protectedKick(targetNick)) { asBotNotice('I will not kick that user.'); return; }
+        this.kick(client, channel, targetNick, args.slice(1).join(' ') || 'fantasy kick');
+        return;
+      case 'ban':
+        if (!need(30)) return;
+        this.ban(client, channel, targetNick, args.slice(1).join(' '), true);
+        return;
+      case 'unban':
+        if (!need(30)) return;
+        this.ban(client, channel, targetNick, '', false);
+        return;
+      case 'topic':
+        if (!need(30)) return;
+        this.topic(client, channel, parsed.rest);
+        return;
+      case 'assign':
+      case 'unassign':
+        asBotNotice('Use /bs ASSIGN or /bs UNASSIGN.');
+        return;
+      default:
+        return;
+    }
   }
 
   buffers(client) {
@@ -503,6 +675,10 @@ export class IrcNetwork {
     extra.push({ type: 'server', author: 'shrc', text: `Names: ${this.nicklist(channel).map((n) => n.prefix + n.nick).join(' ')}`, timestamp: Date.now() });
     if (ch.registered && ch.settings.entrymsg) {
       extra.push({ type: 'notice', author: 'ChanServ', text: `[${channel}] ${ch.settings.entrymsg}`, timestamp: Date.now() });
+    }
+    if (!client.isBot && ch.botserv?.bot && ch.botserv.greet) {
+      const greet = String(ch.botserv.greet).replace(/%n/g, client.nick).replace(/%c/g, channel);
+      this.botSpeak(channel, greet);
     }
     return ok({
       switchBuffer: channel,
@@ -607,7 +783,7 @@ export class IrcNetwork {
   privmsg(client, target, text, type = 'privmsg') {
     const body = sanitize(text);
     if (!body) return fail('Empty message.');
-    if (this._flooded(client)) return fail('Slow down — flood protection.');
+    if (!client.isBot && this._flooded(client)) return fail('Slow down — flood protection.');
     client.lastActive = Date.now();
 
     if (target.startsWith('query:') || (target[0] !== '#' && target !== '*server*')) {
@@ -625,10 +801,11 @@ export class IrcNetwork {
     const channel = normalizeChannel(target);
     const err = this._canSpeak(client, channel);
     if (err) return fail(err);
-    if (state.isNickProtected(client.nick) && !client.identified) {
+    if (!client.isBot && state.isNickProtected(client.nick) && !client.identified) {
       return fail(`Nick '${client.nick}' is registered. /identify <password> to speak.`);
     }
     state.addChatMessage(channel, client.nick, client.fingerprint, body, { type });
+    if (type === 'privmsg' && body.startsWith('!')) this.handleFantasy(client, channel, body);
     return ok();
   }
 
@@ -833,6 +1010,7 @@ export class IrcNetwork {
     if (!client.oper) return fail('Permission denied. You must be a network oper.');
     const target = this.findNick(nick);
     if (!target) return fail(`No such nick: ${nick}`);
+    if (target.isBot) return fail('That is a BotServ bot. Use /bs BOT DEL or /bs UNASSIGN.');
     const why = sanitize(reason, 80) || 'Killed by oper';
     for (const ch of target.channels) {
       this._announce(ch, 'quit', target.nick, `${target.nick} has quit (Killed: ${why})`, { fingerprint: target.fingerprint });
@@ -967,6 +1145,8 @@ export class IrcNetwork {
           '/cs /chanserv         REGISTER FLAGS SOP AOP HOP VOP AKICK SET',
           '/ms /memoserv         SEND LIST READ DEL',
           '/os /operserv         KILL AKILL GLOBAL MODE OPER (opers)',
+          '/bs /botserv          ASSIGN UNASSIGN SAY ACT SET FANTASY',
+          '                      in-channel: !op !kick !voice !topic',
           '/msg NickServ IDENTIFY <pass>',
           'SSH key auto-identifies a nick registered with that key.',
           '--- channel ops ---',
@@ -1017,7 +1197,7 @@ export class IrcNetwork {
         if (args.length < 2) return fail('Usage: /msg <nick|#channel> <text>');
         const tgt = args[0];
         const text = rest.slice(args[0].length).trim();
-        const svc = { nickserv: 'NickServ', ns: 'NickServ', chanserv: 'ChanServ', cs: 'ChanServ', memoserv: 'MemoServ', ms: 'MemoServ', operserv: 'OperServ', os: 'OperServ' }[lower(tgt)];
+        const svc = { nickserv: 'NickServ', ns: 'NickServ', chanserv: 'ChanServ', cs: 'ChanServ', memoserv: 'MemoServ', ms: 'MemoServ', operserv: 'OperServ', os: 'OperServ', botserv: 'BotServ', bs: 'BotServ' }[lower(tgt)];
         if (svc) return handleService(this, client, currentBuffer, svc, text);
         return this.privmsg(client, tgt, text);
       }
@@ -1037,6 +1217,10 @@ export class IrcNetwork {
       case 'os':
       case 'operserv':
         return handleService(this, client, currentBuffer, 'OperServ', rest || 'help');
+
+      case 'bs':
+      case 'botserv':
+        return handleService(this, client, currentBuffer, 'BotServ', rest || 'help');
 
       case 'query':
       case 'q': {

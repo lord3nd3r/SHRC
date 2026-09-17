@@ -52,6 +52,7 @@ export function normalizeChanRecord(ch) {
   if (!ch.admins) ch.admins = [];
   if (!ch.flags) ch.flags = {};
   if (!ch.akick) ch.akick = [];
+  if (!ch.botserv) ch.botserv = { bot: '', fantasy: true, greet: '', dontkickops: true, dontkickvoices: false };
   if (ch.registered == null) ch.registered = false;
   if (!ch.settings) {
     ch.settings = {
@@ -127,6 +128,15 @@ class StateStore {
     this.accounts = { ...defaultAccounts };
     this.serverBans = [];
     this.memos = {};
+    this.bots = {
+      HelpBot: {
+        nick: 'HelpBot',
+        ident: 'bot',
+        host: 'services.shrc',
+        realname: 'a helpful robot',
+        createdBy: 'shrc'
+      }
+    };
     this.stats = {
       totalConnections: 0,
       activeUsers: 0
@@ -146,6 +156,7 @@ class StateStore {
       if (data.accounts) this.accounts = data.accounts;
       if (data.serverBans) this.serverBans = data.serverBans;
       if (data.memos) this.memos = data.memos;
+      if (data.bots) this.bots = { ...this.bots, ...data.bots };
       if (data.stats) {
         this.stats = { ...this.stats, ...data.stats, activeUsers: 0 };
         delete this.stats.pixelsPainted;
@@ -175,6 +186,8 @@ class StateStore {
         lounge.flags.end3r = 'F';
         if (!lounge.flags.late_architect) lounge.flags.late_architect = 'O';
         lounge.settings.desc = lounge.settings.desc || 'the first channel';
+        if (!lounge.botserv) lounge.botserv = { bot: '', fantasy: true, greet: '', dontkickops: true, dontkickvoices: false };
+        if (!lounge.botserv.bot) lounge.botserv.bot = 'HelpBot';
       }
 
       console.log('[StateStore] Loaded persistent state from db.json');
@@ -193,6 +206,7 @@ class StateStore {
         channels: this.channels,
         serverBans: this.serverBans,
         memos: this.memos,
+        bots: this.bots,
         stats: this.stats
       };
       const tmp = DB_FILE + '.tmp';

@@ -25,6 +25,7 @@ Web client: http://localhost:3000
 | `/cs` | ChanServ — register channels, flags `F A O H V`, akick |
 | `/ms` | MemoServ — send / read / del |
 | `/os` | OperServ — kill, akill, global (opers) |
+| `/bs` | BotServ — assign a bot, fantasy `!op` `!kick` |
 
 Channel prefixes: `~` founder  `&` admin  `@` op  `%` halfop  `+` voice
 

@@ -62,6 +62,7 @@ export function handleService(irc, client, buffer, service, text) {
   if (name === 'Chanserv') return chanServ(irc, client, buffer, text);
   if (name === 'Memoserv') return memoServ(irc, client, buffer, text);
   if (name === 'Operserv') return operServ(irc, client, buffer, text);
+  if (name === 'Botserv') return botServ(irc, client, buffer, text);
   return fail('shrc', 'No such service.');
 }
 
@@ -507,5 +508,156 @@ function operServ(irc, client, buffer, text) {
     }
     default:
       return fail(S, 'Unknown command. /os help');
+  }
+}
+
+function botServ(irc, client, buffer, text) {
+  const { cmd, rest, args } = splitArgs(text);
+  const S = 'BotServ';
+  if (!cmd || cmd === 'help') {
+    return notices(S, [
+      'BOT LIST                         list bots',
+      'BOT ADD <nick> [ident [host [realname]]]   (opers) create a bot',
+      'BOT DEL <nick>                   (opers) delete a bot',
+      'ASSIGN <#chan> <bot>             put a bot in a registered channel',
+      'UNASSIGN [#chan]                 remove the bot',
+      'SAY <#chan> <text>               bot speaks',
+      'ACT <#chan> <text>               bot emote',
+      'INFO [#chan]                     assignment + fantasy settings',
+      'SET [#chan] FANTASY|DONTKICKOPS|DONTKICKVOICES|GREET ...',
+      'In channel: !op !deop !voice !kick !ban !topic  (if FANTASY is on)'
+    ]);
+  }
+
+  switch (cmd) {
+    case 'bot': {
+      const sub = lower(args[0]);
+      if (sub === 'list' || !sub) {
+        const rows = Object.values(state.bots).map((b) => {
+          const online = irc.findNick(b.nick);
+          const chans = online ? [...online.channels].join(' ') : '(offline)';
+          return `${b.nick}  ${b.ident}@${b.host}  ${chans}`;
+        });
+        return notices(S, rows.length ? rows : ['No bots. Add one with BOT ADD.']);
+      }
+      if (!client.oper) return fail(S, 'BOT ADD/DEL is for network opers.');
+      if (sub === 'add') {
+        const nick = args[1];
+        if (!isValidNick(nick)) return fail(S, 'Syntax: BOT ADD <nick> [ident [host [realname]]]');
+        if (state.bots[nick] || irc.findNick(nick)) return fail(S, 'That nick is already in use.');
+        const ident = args[2] || 'bot';
+        const host = args[3] || 'services.shrc';
+        const realname = args.slice(4).join(' ') || 'a shrc bot';
+        state.bots[nick] = { nick, ident, host, realname, createdBy: client.nick };
+        irc.spawnBot(state.bots[nick]);
+        state.onChange();
+        return notices(S, [`Bot ${nick} created.`]);
+      }
+      if (sub === 'del' || sub === 'delete') {
+        const nick = args[1];
+        const def = state.bots[nick] || Object.values(state.bots).find((b) => lower(b.nick) === lower(nick));
+        if (!def) return fail(S, 'No such bot.');
+        const bot = irc.findNick(def.nick);
+        if (bot) {
+          for (const ch of [...bot.channels]) irc.botPart(bot, ch);
+          irc.nicks.delete(lower(bot.nick));
+          irc.clients.delete(bot.id);
+        }
+        for (const ch of Object.values(state.channels)) {
+          if (ch.botserv && lower(ch.botserv.bot) === lower(def.nick)) ch.botserv.bot = '';
+        }
+        delete state.bots[def.nick];
+        state.onChange();
+        return notices(S, [`Bot ${def.nick} deleted.`]);
+      }
+      return fail(S, 'Syntax: BOT LIST|ADD|DEL');
+    }
+    case 'assign': {
+      const err = needIdent(client, S);
+      if (err) return err;
+      if (args.length < 2) return fail(S, 'Syntax: ASSIGN <#chan> <bot>');
+      const chan = normalizeChannel(args[0]);
+      const botName = args[1];
+      const ch = state.channels[chan];
+      if (!ch?.registered) return fail(S, 'Channel must be registered first (/cs register).');
+      if (irc.accessRank(client, chan) < 40 && !client.oper) return fail(S, 'You need SOP/founder to assign a bot.');
+      const def = state.bots[botName] || Object.values(state.bots).find((b) => lower(b.nick) === lower(botName));
+      if (!def) return fail(S, 'No such bot. /bs bot list');
+      if (ch.botserv.bot && lower(ch.botserv.bot) !== lower(def.nick)) {
+        const old = irc.findNick(ch.botserv.bot);
+        if (old && old.isBot) irc.botPart(old, chan);
+      }
+      ch.botserv.bot = def.nick;
+      const bot = irc.spawnBot(def);
+      if (!bot) return fail(S, 'Could not spawn bot (nick in use by a person).');
+      irc.botJoin(bot, chan);
+      state.onChange();
+      return notices(S, [`${def.nick} assigned to ${chan}. Fantasy: ${ch.botserv.fantasy ? 'ON' : 'OFF'}`]);
+    }
+    case 'unassign': {
+      const err = needIdent(client, S);
+      if (err) return err;
+      const { chan } = chanOf(args, buffer, 0);
+      if (!chan) return fail(S, 'Syntax: UNASSIGN [#chan]');
+      const ch = state.channels[chan];
+      if (!ch?.botserv?.bot) return fail(S, 'No bot assigned.');
+      if (irc.accessRank(client, chan) < 40 && !client.oper) return fail(S, 'Permission denied.');
+      const bot = irc.findNick(ch.botserv.bot);
+      if (bot && bot.isBot) irc.botPart(bot, chan);
+      ch.botserv.bot = '';
+      state.onChange();
+      return notices(S, [`Bot unassigned from ${chan}.`]);
+    }
+    case 'say': {
+      if (args.length < 2) return fail(S, 'Syntax: SAY <#chan> <text>');
+      const chan = normalizeChannel(args[0]);
+      if (irc.accessRank(client, chan) < 30 && !client.oper) return fail(S, 'You need op access.');
+      const said = irc.botSpeak(chan, args.slice(1).join(' '));
+      return said.ok ? notices(S, ['Message sent.']) : fail(S, said.error);
+    }
+    case 'act': {
+      if (args.length < 2) return fail(S, 'Syntax: ACT <#chan> <text>');
+      const chan = normalizeChannel(args[0]);
+      if (irc.accessRank(client, chan) < 30 && !client.oper) return fail(S, 'You need op access.');
+      const said = irc.botSpeak(chan, args.slice(1).join(' '), 'action');
+      return said.ok ? notices(S, ['Action sent.']) : fail(S, said.error);
+    }
+    case 'info': {
+      const { chan } = chanOf(args, buffer, 0);
+      if (!chan) return fail(S, 'Syntax: INFO [#chan]');
+      const ch = state.channels[chan];
+      if (!ch) return fail(S, 'No such channel.');
+      const bs = ch.botserv || {};
+      return notices(S, [
+        `${chan} bot: ${bs.bot || '(none)'}`,
+        `FANTASY: ${bs.fantasy !== false ? 'ON' : 'OFF'}  DONTKICKOPS: ${bs.dontkickops !== false ? 'ON' : 'OFF'}  DONTKICKVOICES: ${bs.dontkickvoices ? 'ON' : 'OFF'}`,
+        `GREET: ${bs.greet || '(none)'}`
+      ]);
+    }
+    case 'set': {
+      const err = needIdent(client, S);
+      if (err) return err;
+      const { chan, resti } = chanOf(args, buffer, 0);
+      const ch = state.channels[chan];
+      if (!ch) return fail(S, 'No such channel.');
+      if (irc.accessRank(client, chan) < 40 && !client.oper) return fail(S, 'Permission denied.');
+      if (!ch.botserv) ch.botserv = { bot: '', fantasy: true, greet: '', dontkickops: true, dontkickvoices: false };
+      const what = lower(args[resti]);
+      const val = args.slice(resti + 1).join(' ');
+      if (what === 'fantasy' || what === 'dontkickops' || what === 'dontkickvoices') {
+        const on = !/^(off|0|false|no)$/i.test(val || 'on');
+        ch.botserv[what] = on;
+        state.onChange();
+        return notices(S, [`${what.toUpperCase()} is now ${on ? 'ON' : 'OFF'}.`]);
+      }
+      if (what === 'greet') {
+        ch.botserv.greet = sanitize(val, 160);
+        state.onChange();
+        return notices(S, [`Greet ${val ? 'set' : 'cleared'}. Use %n for nick, %c for channel.`]);
+      }
+      return fail(S, 'SET FANTASY|DONTKICKOPS|DONTKICKVOICES|GREET');
+    }
+    default:
+      return fail(S, 'Unknown command. /bs help');
   }
 }

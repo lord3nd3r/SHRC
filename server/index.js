@@ -124,6 +124,8 @@ io.on('connection', (socket) => {
   });
 });
 
+irc.bootBots();
+
 createSSHServer(SSH_PORT);
 
 server.listen(HTTP_PORT, () => {
