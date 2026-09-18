@@ -646,7 +646,12 @@ export class IrcNetwork {
         return;
       case 'kick':
         if (!need(30)) return;
-        if (protectedKick(targetNick)) { asBotNotice('I will not kick that user.'); return; }
+        if (protectedKick(targetNick)) {
+          asBotNotice(this.findNick(targetNick)?.isBot
+            ? 'I will not kick a service bot. Use /bs unassign.'
+            : 'I will not kick that user.');
+          return;
+        }
         this.kick(client, channel, targetNick, args.slice(1).join(' ') || 'fantasy kick');
         return;
       case 'ban':
@@ -900,6 +905,7 @@ export class IrcNetwork {
     if (!this.isOp(client, key)) return fail(`You're not a channel operator on ${key}. Try /op after an oper grants it.`);
     const target = this.findNick(nick);
     if (!target || !target.channels.has(key)) return fail(`They're not on ${key}.`);
+    if (target.isBot) return fail("You can't kick a service bot. Use /bs unassign.");
     if (target.oper && !client.oper) return fail("You can't kick a network oper.");
     const why = sanitize(reason, 80) || client.nick;
     this._announce(key, 'kick', client.nick, `${target.nick} was kicked from ${key} by ${client.nick} (${why})`, {
@@ -927,6 +933,9 @@ export class IrcNetwork {
     if (give && target && !target.channels.has(key)) return fail(`${name} is not on ${key}.`);
     const ch = state.ensureChannel(key);
     const ln = lower(name);
+    if (target?.isBot && !give) {
+      return fail("You can't strip status from a service bot. Use /bs unassign.");
+    }
     if (letter === 'o' && !give && ln === ch.founder && !client.oper && lower(client.nick) !== ln) {
       return fail("You can't deop the channel founder (network oper can).");
     }
@@ -967,7 +976,7 @@ export class IrcNetwork {
       if (ch.bans.some((b) => lower(b.mask) === lower(resolved))) return ok({ status: `Ban already exists on ${key}` });
       ch.bans.push({ mask: resolved, setBy: client.nick, setAt: Date.now(), reason: sanitize(reason, 80) });
       this.announceMode(key, client.nick, `+b ${resolved}`, client.fingerprint);
-      if (target && target.channels.has(key) && !target.oper) {
+      if (target && target.channels.has(key) && !target.oper && !target.isBot) {
         this._announce(key, 'kick', client.nick, `${target.nick} was kicked from ${key} by ${client.nick} (banned)`, { fingerprint: client.fingerprint });
         target.channels.delete(key);
       }
