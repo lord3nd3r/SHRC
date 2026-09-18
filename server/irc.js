@@ -38,25 +38,33 @@ export function isSshKeyFingerprint(fp) {
   return String(fp || '').startsWith('SHA256:');
 }
 
-function visibleHost(client) {
-  if (client.identified) {
+function cloakHost(client) {
+  if (client?.isBot) return client.ip || 'services.shrc';
+  if (client?.identified) {
     const acc = state.getAccount(client.account);
     if (acc?.vhost && acc.vhostOn !== false) return acc.vhost;
   }
-  return client.ip || '0.0.0.0';
+  const src = String(client?.ip || '0') + '\0' + String(client?.fingerprint || '');
+  const h = crypto.createHash('sha256').update(src).digest('hex').slice(0, 10);
+  return `${h}.users.shrc`;
 }
 
-function hostmask(client) {
-  return `${client.nick}!${client.ident}@${visibleHost(client)}`;
+export function hostmask(client, viewer) {
+  const showReal = !!(viewer && viewer.oper && !client?.isBot);
+  const host = showReal ? (client.ip || '0.0.0.0') : cloakHost(client);
+  return `${client.nick}!${client.ident}@${host}`;
 }
 
 function matchMask(mask, client) {
   const m = lower(mask);
   if (!m) return false;
   if (m === lower(client.nick) || m === lower(client.fingerprint) || m === lower(client.ip)) return true;
-  const full = hostmask(client);
+  const cloaked = hostmask(client);
+  const real = `${client.nick}!${client.ident}@${client.ip || '0.0.0.0'}`;
   try {
-    return globToRegExp(m).test(full) || globToRegExp(m).test(client.nick) || globToRegExp(m).test(client.ip || '');
+    const re = globToRegExp(m);
+    return re.test(cloaked) || re.test(real) || re.test(cloakHost(client))
+      || re.test(client.nick) || re.test(client.ip || '') || re.test(client.fingerprint || '');
   } catch {
     return false;
   }
@@ -1187,7 +1195,7 @@ export class IrcNetwork {
           '/topic [#chan] [text] view or set topic',
           '/names [#chan]        list nicks',
           '/who [#chan]          who is here',
-          '/whois <nick>         lookup a nick',
+          '/whois <nick>         lookup a nick (opers see real IP)',
           '/list                 list channels',
           '/away [msg]           set or clear away',
           '/invite <nick> [#ch]  invite someone',
@@ -1321,7 +1329,7 @@ export class IrcNetwork {
         const chan = channelOf(args[0]);
         const lines = this.nicklist(chan).map((n) => {
           const c = this.findNick(n.nick);
-          return `${n.prefix}${n.nick}  ${c ? hostmask(c) : ''}  ${n.away ? '[away]' : ''}${n.identified ? ' [id]' : ''}${n.oper ? ' [*]' : ''}`;
+          return `${n.prefix}${n.nick}  ${c ? hostmask(c, client) : ''}  ${n.away ? '[away]' : ''}${n.identified ? ' [id]' : ''}${n.oper ? ' [*]' : ''}`;
         });
         return infoLines(lines.length ? [`WHO ${chan}`, ...lines] : [`${chan}: nobody here`]);
       }
@@ -1340,10 +1348,9 @@ export class IrcNetwork {
           t.away ? `away: ${t.away}` : 'not away',
           `idle ${idle}s, signed on ${Math.floor((Date.now() - t.connectedAt) / 1000)}s ago`
         ];
-        if (client.oper) lines.push(`ip ${t.ip}  fp ${t.fingerprint}`);
-        else {
-          const acc = t.identified ? state.getAccount(t.account) : null;
-          if (acc?.vhost && acc.vhostOn !== false) lines.push(`vhost ${acc.vhost}`);
+        if (client.oper) {
+          lines.push(`ip ${t.ip || 'unknown'}  cloak ${cloakHost(t)}`);
+          lines.push(`fp ${t.fingerprint}`);
         }
         return infoLines(lines);
       }
