@@ -9,6 +9,7 @@ import { state } from './state.js';
 import { irc } from './irc.js';
 import { TUISession } from './tui-engine.js';
 import { createSSHServer } from './ssh-server.js';
+import { startIrcTls } from './irc-daemon.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +24,7 @@ const wss = new WebSocketServer({ server, path: '/ws', perMessageDeflate: false 
 const HTTP_PORT = process.env.PORT || 3000;
 const HTTP_BIND = process.env.HTTP_BIND || '0.0.0.0';
 const SSH_PORT = process.env.SSH_PORT || 2222;
+const IRC_TLS_PORT = process.env.IRC_TLS_PORT != null ? parseInt(process.env.IRC_TLS_PORT, 10) : 6697;
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -155,6 +157,7 @@ wss.on('connection', (ws, req) => {
 irc.bootBots();
 
 createSSHServer(SSH_PORT);
+if (IRC_TLS_PORT) startIrcTls(IRC_TLS_PORT);
 
 server.listen(HTTP_PORT, HTTP_BIND, () => {
   console.log(`[HTTP Server] Listening on http://${HTTP_BIND}:${HTTP_PORT}`);

@@ -128,6 +128,18 @@ export class IrcNetwork {
     this.nicks = new Map();
     this.invites = new Map();
     this.flood = new Map();
+    this.hooks = new Set();
+  }
+
+  on(fn) {
+    this.hooks.add(fn);
+    return () => this.hooks.delete(fn);
+  }
+
+  emit(ev) {
+    for (const fn of this.hooks) {
+      try { fn(ev); } catch {}
+    }
   }
 
   allocGuest() {
@@ -231,7 +243,7 @@ export class IrcNetwork {
     }) || null;
   }
 
-  connect({ id, nick, fingerprint, ip, onKill }) {
+  connect({ id, nick, fingerprint, ip, onKill, via, ident, realname }) {
     const ban = this.checkBan({ fingerprint, ip, nick });
     if (ban) {
       return { banned: true, ban };
@@ -246,8 +258,9 @@ export class IrcNetwork {
       nick: this.guestNick(bound ? bound.nickname : (nick || remembered)),
       fingerprint: fp,
       ip: ip || '0.0.0.0',
-      ident: identFromFp(fp),
-      realname: 'anon',
+      ident: ident || identFromFp(fp),
+      realname: realname || 'anon',
+      via: via || 'ssh',
       channels: new Set(),
       queries: new Set(),
       identified: false,
@@ -296,7 +309,7 @@ export class IrcNetwork {
       });
     }
 
-    client.ident = identFromFp(client.fingerprint);
+    if (!ident) client.ident = identFromFp(client.fingerprint);
     this.clients.set(id, client);
     this.nicks.set(lower(client.nick), client);
     state.stats.activeUsers = this.humanCount();
@@ -760,6 +773,7 @@ export class IrcNetwork {
 
   _announce(channel, type, author, text, extra = {}) {
     state.addChatMessage(channel, author, extra.fingerprint || 'shrc', text, { type, extra });
+    this.emit({ kind: type, room: channel, author, text, extra, fingerprint: extra.fingerprint });
   }
 
   _channelBanHit(ch, client) {
@@ -983,6 +997,7 @@ export class IrcNetwork {
       client.queries.add(dest.nick);
       dest.queries.add(client.nick);
       state.addChatMessage(room, client.nick, client.fingerprint, body, { type });
+      this.emit({ kind: type, room, author: client.nick, text: body, from: client, to: dest });
       return ok({ openQuery: dest.nick, switchBuffer: room });
     }
 
@@ -994,6 +1009,14 @@ export class IrcNetwork {
     }
     state.addChatMessage(channel, client.nick, client.fingerprint, body, {
       type,
+      extra: { prefix: this.prefix(client, channel) }
+    });
+    this.emit({
+      kind: type,
+      room: channel,
+      author: client.nick,
+      text: body,
+      from: client,
       extra: { prefix: this.prefix(client, channel) }
     });
     if (type === 'privmsg' && /^\.[A-Za-z]/.test(body)) this.handleFantasy(client, channel, body);

@@ -8,6 +8,8 @@ WorkingDirectory=/home/ender/SHRC
 Environment=PORT=3000
 Environment=HTTP_BIND=127.0.0.1
 Environment=SSH_PORT=2222
+Environment=IRC_TLS_PORT=6697
+Environment=IRC_TLS_CN=frank.3nd3r.net
 ExecStart=/usr/bin/node server/index.js
 Restart=on-failure
 RestartSec=2

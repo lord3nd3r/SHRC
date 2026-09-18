@@ -4,5 +4,7 @@ data/db.json
 data/*.sqlite
 data/*.sqlite-journal
 data/*.tmp
+data/irc.crt
+data/irc.key
 *.log
 .DS_Store
