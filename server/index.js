@@ -18,7 +18,7 @@ const CLI_DIR = path.join(ROOT_DIR, 'cli');
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ server, path: '/ws', perMessageDeflate: false });
 
 const HTTP_PORT = process.env.PORT || 3000;
 const HTTP_BIND = process.env.HTTP_BIND || '0.0.0.0';
@@ -108,10 +108,17 @@ wss.on('connection', (ws, req) => {
   };
 
   let session = null;
+  const heartbeat = setInterval(() => {
+    if (ws.readyState === 1) {
+      try { ws.ping(); } catch {}
+      send(ws, { op: 'ping' });
+    }
+  }, 15000);
 
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(String(raw)); } catch { return; }
+    if (msg.op === 'ping' || msg.op === 'pong') return;
     if (msg.op === 'start') {
       if (session) session.destroy();
       virtualStream.columns = msg.cols || 90;
@@ -127,10 +134,13 @@ wss.on('connection', (ws, req) => {
     }
   });
 
-  ws.on('close', () => {
+  const drop = () => {
+    clearInterval(heartbeat);
     if (session) session.destroy();
     session = null;
-  });
+  };
+  ws.on('close', drop);
+  ws.on('error', drop);
 });
 
 irc.bootBots();

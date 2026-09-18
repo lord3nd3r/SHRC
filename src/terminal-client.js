@@ -73,6 +73,9 @@ export function initTerminalClient(containerId, closeBtnId) {
   let term = null;
   let fitAddon = null;
   let started = false;
+  let pingTimer = null;
+  let reconnectTimer = null;
+  let reconnects = 0;
 
   function applyTheme() {
     if (!term) return;
@@ -106,15 +109,56 @@ export function initTerminalClient(containerId, closeBtnId) {
     });
   }
 
+  function stopPing() {
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+  }
+
+  function startPing() {
+    stopPing();
+    pingTimer = setInterval(() => send({ op: 'ping' }), 15000);
+  }
+
+  function scheduleReconnect() {
+    if (!modal?.classList.contains('open')) return;
+    if (reconnectTimer) return;
+    const wait = Math.min(8000, 400 * (2 ** reconnects));
+    reconnects += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (!modal?.classList.contains('open')) return;
+      started = false;
+      ensureSession();
+      whenOpen(() => {
+        send({ op: 'start', ...size() });
+        started = true;
+        if (term) {
+          term.write('\r\n\x1b[33mreconnected\x1b[0m\r\n');
+        }
+        term?.focus();
+      });
+    }, wait);
+  }
+
   function ensureSession() {
     if (!socket || socket.readyState > 1) {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       socket = new WebSocket(`${proto}://${location.host}/ws`);
+      socket.addEventListener('open', () => {
+        reconnects = 0;
+        startPing();
+      });
       socket.addEventListener('message', (ev) => {
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.op === 'ping') { send({ op: 'pong' }); return; }
         if (msg.op === 'out' && term) term.write(msg.data);
       });
+      socket.addEventListener('close', () => {
+        stopPing();
+        started = false;
+        scheduleReconnect();
+      });
+      socket.addEventListener('error', () => {});
     }
     if (!term && window.Terminal) {
       term = new window.Terminal({
@@ -174,6 +218,9 @@ export function initTerminalClient(containerId, closeBtnId) {
 
   function closeModal() {
     if (modal) modal.classList.remove('open');
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    stopPing();
+    try { socket?.close(); } catch {}
   }
 
   if (closeBtn) closeBtn.addEventListener('click', closeModal);
