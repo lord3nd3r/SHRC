@@ -10,7 +10,7 @@ import { handleService } from './services.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '..', 'data');
-const SERVER = 'shrc';
+const SERVER = process.env.IRC_TLS_CN || process.env.IRC_SERVER_NAME || 'shrc';
 
 function parseLine(line) {
   let rest = line.replace(/\r$/, '');
@@ -70,6 +70,7 @@ class IrcWire {
     this.client = null;
     this.buf = '';
     this.unsub = null;
+    try { socket.setNoDelay(true); } catch {}
     socket.setEncoding('utf8');
     socket.on('data', (chunk) => this.onData(chunk));
     socket.on('close', () => this.drop('Connection closed'));
@@ -350,19 +351,10 @@ class IrcWire {
       return;
     }
     if (cmd === 'LIST') {
-      let minU = -1;
-      let maxU = 1e9;
-      let nameFilt = '';
       const a = String(args[0] || '').trim();
+      let nameFilt = '';
       if (a.startsWith('#') || (a && !/[<>]/.test(a))) {
         nameFilt = a.replace(/\*/g, '').toLowerCase();
-      } else if (a) {
-        for (const part of a.split(',')) {
-          const gt = part.match(/^>(\d+)$/);
-          const lt = part.match(/^<(\d+)$/);
-          if (gt) minU = parseInt(gt[1], 10);
-          else if (lt) maxU = parseInt(lt[1], 10);
-        }
       }
       this.numeric('321', 'Channel', 'Users  Name');
       for (const ch of Object.values(state.channels)) {
@@ -370,8 +362,11 @@ class IrcWire {
         if (ch.modes?.s && !c.channels.has(ch.name) && !c.oper) continue;
         if (nameFilt && !ch.name.toLowerCase().includes(nameFilt)) continue;
         const n = irc.members(ch.name).length;
-        if (n <= minU || n >= maxU) continue;
-        this.numeric('322', `${ch.name} ${n}`, ch.topic || '');
+        const topic = String(ch.topic || ' ')
+          .replace(/[\u2010-\u2015]/g, '-')
+          .replace(/[^\x20-\x7e]/g, ' ')
+          .trim() || ' ';
+        this.numeric('322', `${ch.name} ${n}`, topic);
       }
       this.numeric('323', '', 'End of /LIST');
       return;
