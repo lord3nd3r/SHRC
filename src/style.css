@@ -1,5 +1,3 @@
-@import "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap";
-
 :root {
   --bg: #020805;
   --panel: #05140a;
@@ -9,7 +7,7 @@
   --green: #39ff6a;
   --green-dim: #1f8a3a;
   --amber: #d4ff7a;
-  --font: "Fira Code", ui-monospace, "Cascadia Code", Consolas, monospace;
+  --font: ui-monospace, "Cascadia Code", "Cascadia Mono", "Fira Code", Consolas, "Liberation Mono", monospace;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

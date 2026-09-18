@@ -21,6 +21,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 const HTTP_PORT = process.env.PORT || 3000;
+const HTTP_BIND = process.env.HTTP_BIND || '0.0.0.0';
 const SSH_PORT = process.env.SSH_PORT || 2222;
 
 app.use((req, res, next) => {
@@ -136,7 +137,7 @@ irc.bootBots();
 
 createSSHServer(SSH_PORT);
 
-server.listen(HTTP_PORT, () => {
-  console.log(`[HTTP Server] Listening on http://localhost:${HTTP_PORT}`);
+server.listen(HTTP_PORT, HTTP_BIND, () => {
+  console.log(`[HTTP Server] Listening on http://${HTTP_BIND}:${HTTP_PORT}`);
   console.log(`[HTTP Server] Web terminal ready`);
 });

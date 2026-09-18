@@ -1,0 +1,16 @@
+[Unit]
+Description=shrc ssh clubhouse
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ender/SHRC
+Environment=PORT=3000
+Environment=HTTP_BIND=127.0.0.1
+Environment=SSH_PORT=2222
+ExecStart=/usr/bin/node server/index.js
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
