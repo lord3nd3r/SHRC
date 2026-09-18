@@ -134,14 +134,31 @@ class IrcWire {
     this.numeric('001', '', `Welcome to shrc ${this.mask()}`);
     this.numeric('002', '', `Your host is ${SERVER}, running shrc`);
     this.numeric('003', '', 'This server was created for ssh and ircs');
-    this.numeric('004', `${SERVER} shrc-1 oOiwstn ovb`);
-    this.numeric('005', 'CHANTYPES=# PREFIX=(qaohv)~&@%+ NETWORK=shrc CASEMAPPING=rfc1459', 'are supported by this server');
+    this.numeric('004', `${SERVER} shrc-1 iowstn ovb`);
+    this.numeric('005', 'CHANTYPES=# PREFIX=(qaohv)~&@%+ NETWORK=shrc CASEMAPPING=rfc1459 CHANMODES=b,,kl,ntims', 'are supported by this server');
+    this.numeric('251', '', `There are ${irc.humanCount()} users on 1 server`);
     this.numeric('375', '', `- ${SERVER} Message of the day -`);
     for (const line of joined.motd || []) this.numeric('372', '', '- ' + line);
     this.numeric('376', '', 'End of /MOTD command');
     for (const line of joined.nickserv || []) {
       this.send(`:NickServ!service@services.${SERVER} NOTICE ${this.nick} :${line.text}`);
     }
+    this.send(`PING :${SERVER}`);
+    for (const res of irc.autoJoinChannels(this.client)) {
+      if (res.ok && res.switchBuffer) this.confirmJoin(res.switchBuffer);
+    }
+  }
+
+  confirmJoin(chan) {
+    this.send(`:${this.mask()} JOIN ${chan}`);
+    const ch = state.channels[chan];
+    if (ch?.topic) {
+      this.numeric('332', chan, ch.topic);
+      this.numeric('333', `${chan} ${ch.topicBy || SERVER} ${Math.floor((ch.topicAt || Date.now()) / 1000)}`);
+    } else {
+      this.numeric('331', chan, 'No topic is set');
+    }
+    this.names(chan);
   }
 
   drop(reason) {
@@ -183,7 +200,7 @@ class IrcWire {
     if (ev.kind === 'join') {
       if (lower(ev.author) === lower(me.nick)) return;
       const u = irc.findNick(ev.author);
-      this.send(`:${u ? hostmask(u) : src} JOIN :${ev.room}`);
+      this.send(`:${u ? hostmask(u) : src} JOIN ${ev.room}`);
     } else if (ev.kind === 'part') {
       if (lower(ev.author) === lower(me.nick)) return;
       this.send(`:${src} PART ${ev.room} :${ev.text || ''}`);
@@ -211,7 +228,13 @@ class IrcWire {
   handle(msg) {
     const { cmd, args } = msg;
     if (cmd === 'CAP') {
-      if ((args[0] || '').toUpperCase() === 'LS') this.send(`:${SERVER} CAP ${this.nick} LS :`);
+      const sub = (args[0] || '').toUpperCase();
+      const nick = this.nick || '*';
+      if (sub === 'LS') this.send(`:${SERVER} CAP ${nick} LS :multi-prefix`);
+      else if (sub === 'REQ') {
+        const caps = args.slice(1).join(' ').replace(/^:/, '');
+        this.send(`:${SERVER} CAP ${nick} ACK :${caps}`);
+      }
       return;
     }
     if (cmd === 'PING') {
@@ -251,21 +274,19 @@ class IrcWire {
     }
     const c = this.client;
     if (cmd === 'JOIN') {
-      for (const name of String(args[0] || '').split(',')) {
+      const list = String(args[0] || '').replace(/^:/, '');
+      if (list === '0') {
+        for (const ch of [...c.channels]) irc.part(c, ch, 'JOIN 0');
+        return;
+      }
+      for (const name of list.split(',')) {
         if (!name) continue;
         const res = irc.join(c, name, args[1]);
         if (!res.ok) {
           this.numeric('403', name, res.error || 'No such channel');
           continue;
         }
-        const chan = res.switchBuffer || name;
-        this.send(`:${this.mask()} JOIN :${chan}`);
-        const ch = state.channels[chan];
-        if (ch?.topic) {
-          this.numeric('332', chan, ch.topic);
-          this.numeric('333', `${chan} ${ch.topicBy || SERVER} ${Math.floor((ch.topicAt || Date.now()) / 1000)}`);
-        }
-        this.names(chan);
+        this.confirmJoin(res.switchBuffer || name);
       }
       return;
     }
