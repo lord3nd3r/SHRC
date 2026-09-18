@@ -75,9 +75,12 @@ export function initTerminalClient(containerId, closeBtnId) {
     return { cols: term?.cols || 90, rows: term?.rows || 30 };
   }
 
+  function send(obj) {
+    if (socket && socket.readyState === 1) socket.send(JSON.stringify(obj));
+  }
+
   function emitSize() {
-    if (!socket) return;
-    socket.emit('terminal:resize', size());
+    send({ op: 'resize', ...size() });
   }
 
   function setMax(on) {
@@ -92,10 +95,13 @@ export function initTerminalClient(containerId, closeBtnId) {
   }
 
   function ensureSession() {
-    if (!socket) {
-      socket = io({ autoConnect: true });
-      socket.on('terminal:output', (data) => {
-        if (term) term.write(data);
+    if (!socket || socket.readyState > 1) {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      socket = new WebSocket(`${proto}://${location.host}/ws`);
+      socket.addEventListener('message', (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.op === 'out' && term) term.write(msg.data);
       });
     }
     if (!term && window.Terminal) {
@@ -116,7 +122,7 @@ export function initTerminalClient(containerId, closeBtnId) {
         term.loadAddon(fitAddon);
       }
       term.open(container);
-      term.onData((data) => socket.emit('terminal:input', data));
+      term.onData((data) => send({ op: 'in', data }));
       window.addEventListener('resize', () => {
         if (!modal?.classList.contains('open')) return;
         emitSize();
@@ -128,6 +134,11 @@ export function initTerminalClient(containerId, closeBtnId) {
     }
   }
 
+  function whenOpen(cb) {
+    if (socket && socket.readyState === 1) cb();
+    else if (socket) socket.addEventListener('open', cb, { once: true });
+  }
+
   window.openWebTerminal = () => {
     if (modal) modal.classList.add('open');
     let max = false;
@@ -136,14 +147,16 @@ export function initTerminalClient(containerId, closeBtnId) {
     ensureSession();
     requestAnimationFrame(() => {
       applyTheme();
-      const s = size();
-      if (!started) {
-        socket.emit('terminal:start', s);
-        started = true;
-      } else {
-        socket.emit('terminal:resize', s);
-      }
-      term?.focus();
+      whenOpen(() => {
+        const s = size();
+        if (!started) {
+          send({ op: 'start', ...s });
+          started = true;
+        } else {
+          send({ op: 'resize', ...s });
+        }
+        term?.focus();
+      });
     });
   };
 

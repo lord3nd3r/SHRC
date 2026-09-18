@@ -16,11 +16,12 @@ npm install
 node server/index.js
 ```
 
-If `npm install` dies with `ENOENT ... mkdir .../node_modules/@...`, a previous failed install left a broken `node_modules`. Wipe it and try again:
+If `npm install` dies with `ENOENT ... mkdir .../node_modules`, wipe and retry (the install script also creates `node_modules` first):
 
 ```bash
 rm -rf node_modules
 git pull
+mkdir -p node_modules
 npm install
 ```
 

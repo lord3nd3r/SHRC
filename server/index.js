@@ -2,7 +2,8 @@ import express from 'express';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { Server as SocketIOServer } from 'socket.io';
+import { WebSocketServer } from 'ws';
+import crypto from 'crypto';
 
 import { state } from './state.js';
 import { irc } from './irc.js';
@@ -17,9 +18,7 @@ const CLI_DIR = path.join(ROOT_DIR, 'cli');
 
 const app = express();
 const server = http.createServer(app);
-const io = new SocketIOServer(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
-});
+const wss = new WebSocketServer({ server, path: '/ws' });
 
 const HTTP_PORT = process.env.PORT || 3000;
 const SSH_PORT = process.env.SSH_PORT || 2222;
@@ -71,63 +70,63 @@ app.get('/api/channels', (req, res) => {
   res.json(list);
 });
 
-function socketIp(socket) {
-  const fwd = socket.handshake.headers['x-forwarded-for'];
+function clientIp(req) {
+  const fwd = req.headers['x-forwarded-for'];
   if (fwd) return String(fwd).split(',')[0].trim();
-  return socket.handshake.address || '0.0.0.0';
+  return req.socket?.remoteAddress || '0.0.0.0';
 }
 
-io.on('connection', (socket) => {
-  const ip = socketIp(socket);
-  const fingerprint = 'web:' + socket.id;
+function send(ws, obj) {
+  if (ws.readyState === 1) ws.send(JSON.stringify(obj));
+}
+
+wss.on('connection', (ws, req) => {
+  const ip = clientIp(req);
+  const fingerprint = 'web:' + crypto.randomBytes(6).toString('hex');
   const ban = irc.checkBan({ fingerprint, ip, nick: '' });
   if (ban) {
-    socket.emit('terminal:output', `\r\n banned from shrc (${ban.reason})\r\n`);
-    socket.disconnect(true);
+    send(ws, { op: 'out', data: `\r\n banned from shrc (${ban.reason})\r\n` });
+    ws.close();
     return;
   }
 
-  const webUser = {
-    username: null,
-    fingerprint,
-    ip
-  };
+  const webUser = { username: null, fingerprint, ip };
 
   const virtualStream = {
     writable: true,
     columns: 90,
     rows: 30,
     write: (data) => {
-      socket.emit('terminal:output', data);
+      send(ws, { op: 'out', data: typeof data === 'string' ? data : Buffer.from(data).toString('utf8') });
     },
     end: () => {
-      socket.emit('terminal:output', '\r\n');
-      socket.disconnect(true);
+      send(ws, { op: 'out', data: '\r\n' });
+      ws.close();
     },
-    disconnectSocket: () => socket.disconnect(true)
+    disconnectSocket: () => ws.close()
   };
 
   let session = null;
 
-  socket.on('terminal:start', ({ cols, rows } = {}) => {
-    if (session) session.destroy();
-    virtualStream.columns = cols || 90;
-    virtualStream.rows = rows || 30;
-    session = new TUISession(virtualStream, webUser);
-    session.handleResize(virtualStream.columns, virtualStream.rows);
+  ws.on('message', (raw) => {
+    let msg;
+    try { msg = JSON.parse(String(raw)); } catch { return; }
+    if (msg.op === 'start') {
+      if (session) session.destroy();
+      virtualStream.columns = msg.cols || 90;
+      virtualStream.rows = msg.rows || 30;
+      session = new TUISession(virtualStream, webUser);
+      session.handleResize(virtualStream.columns, virtualStream.rows);
+    } else if (msg.op === 'in') {
+      if (session && session.alive) session.handleInput(Buffer.from(msg.data || '', 'utf8'));
+    } else if (msg.op === 'resize') {
+      virtualStream.columns = msg.cols;
+      virtualStream.rows = msg.rows;
+      if (session && session.alive) session.handleResize(msg.cols, msg.rows);
+    }
   });
 
-  socket.on('terminal:input', (data) => {
-    if (session && session.alive) session.handleInput(Buffer.from(data));
-  });
-
-  socket.on('terminal:resize', ({ cols, rows }) => {
-    virtualStream.columns = cols;
-    virtualStream.rows = rows;
-    if (session && session.alive) session.handleResize(cols, rows);
-  });
-
-  socket.on('disconnect', () => {
+  ws.on('close', () => {
     if (session) session.destroy();
     session = null;
   });
