@@ -1,8 +1,8 @@
 # shrc
 
-shrc is a small IRC network you reach over SSH (or a browser terminal). Guests are allowed. Nicks, channels, ops, and vhosts are handled by Anope-style services. There is no signup form: you connect, pick a nick, and talk.
+shrc is a clubhouse you reach over **SSH** or a **browser terminal**. Inside, the commands are IRC (`/join`, `/nick`, NickServ, ChanServ, …). There is **no classic IRC port** (nothing on 6667). HexChat, WeeChat, irssi, and similar clients cannot connect as an IRC server — use SSH or the web app.
 
-It is IRC first. There is no radio, games, or canvas — just channels, queries, and services.
+Guests are allowed. There is no signup form.
 
 ## Requirements
 
@@ -23,9 +23,9 @@ That starts:
 | Service | Default |
 |---|---|
 | HTTP + web terminal | http://localhost:3000 |
-| SSH IRC | `ssh localhost -p 2222` |
+| SSH | `ssh localhost -p 2222` |
 
-Override ports with `PORT` and `SSH_PORT`. Set `SHRC_OPER_PASSWORD` if you want a network-wide oper password that is not a NickServ password.
+There is no RFC 1459 listener. Override ports with `PORT` and `SSH_PORT`. Set `SHRC_OPER_PASSWORD` if you want a network-wide oper password that is not a NickServ password. Full SSH instructions for each OS are below and on `/connect`.
 
 ```bash
 PORT=8080 SSH_PORT=2222 SHRC_OPER_PASSWORD=secret node server/index.js
@@ -38,19 +38,123 @@ ssh localhost -p 2222
 ssh frank@localhost -p 2222
 ```
 
-## Connecting
+## How to connect
 
-**Web.** Open `/`, click the web client. You land as `Guest` plus six digits. The socket is not opened until the terminal modal is open, so idle visitors are not counted as online.
+Replace `HOST` with the machine running shrc (`localhost` if it is on your computer). Default SSH port is **2222**. Default web port is **3000**.
 
-**SSH.** The server accepts public keys (preferred) and, if you have no key, anonymous `none` auth.
+You will not be asked for an SSH password. Identity is your **SSH public key** (or a guest id if you have no key). The first time a host key prompt appears, type `yes`.
 
-- `ssh host -p 2222` → `Guest######`
-- `ssh frank@host -p 2222` → nick `frank` (if it is free)
-- Usernames `root`, `git`, `anonymous`, and `anon` are treated as guests
+Inside the session: `/nick alice`, `/join #lounge`, `/help`. Ctrl+C or `/quit` disconnects.
 
-SSH identity is the **key**, not the password. The first `none` probe is rejected so OpenSSH actually sends a public key. The fingerprint is stored as `SHA256:…`.
+### Web (any OS)
 
-Ctrl+C or `/quit` disconnects. `qq` on an empty-looking input also quits.
+Open `http://HOST:3000` (or the public site) and click **open the web client**. You land as `Guest######`. Web sessions do not bind an SSH key; `/identify` each time if you have a registered nick.
+
+### Linux
+
+OpenSSH is already there on current Ubuntu, Debian, Fedora, Arch, openSUSE, and most others.
+
+```bash
+# Ubuntu / Debian (only if ssh is missing)
+sudo apt update && sudo apt install -y openssh-client
+
+# Fedora / RHEL
+sudo dnf install -y openssh-clients
+
+# Arch
+sudo pacman -S openssh
+```
+
+```bash
+ssh HOST -p 2222                 # guest nick
+ssh frank@HOST -p 2222           # claim nick "frank" if it is free
+```
+
+Optional key (recommended, binds to a registered nick after `/identify`):
+
+```bash
+ssh-keygen -t ed25519 -C "you@shrc"
+# accept the default path: ~/.ssh/id_ed25519
+ssh frank@HOST -p 2222
+```
+
+GNOME Terminal, Konsole, kitty, foot, or any terminal emulator is fine.
+
+### macOS
+
+Terminal.app (or iTerm2 / Ghostty / Kitty). OpenSSH ships with macOS. No extra install.
+
+```bash
+ssh HOST -p 2222
+ssh frank@HOST -p 2222
+ssh-keygen -t ed25519 -C "you@shrc"
+```
+
+Keys land in `~/.ssh/id_ed25519`. If macOS asks to store the key in Keychain, that is optional.
+
+### Windows 11 and Windows 10 (1809+)
+
+Use **OpenSSH in PowerShell** or **Windows Terminal**. This is the current Microsoft-supported client; you do not need PuTTY.
+
+**1. Confirm OpenSSH Client** (preinstalled on Windows 11 and current Windows 10):
+
+```powershell
+Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Client*'
+```
+
+If `State` is not `Installed`, in an **elevated** PowerShell:
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+```
+
+Or: Settings → System → Optional features → Add → **OpenSSH Client**.
+
+**2. Connect** from PowerShell, Windows Terminal, or Command Prompt:
+
+```powershell
+ssh HOST -p 2222
+ssh frank@HOST -p 2222
+```
+
+**3. Key** (same as Unix; run in PowerShell):
+
+```powershell
+ssh-keygen -t ed25519 -C "you@shrc"
+# default file: $env:USERPROFILE\.ssh\id_ed25519
+ssh frank@HOST -p 2222
+```
+
+Windows Terminal is the default console on Windows 11 (Microsoft Store / built-in). Windows PowerShell 5.1 and PowerShell 7 both work; they call the same `ssh.exe`.
+
+**WSL** (Ubuntu or another distro): follow the Linux section from the WSL shell.
+
+**PuTTY** still works if you already use it: host `HOST`, port `2222`, connection type SSH. Auth is the `.ppk` key (PuTTYgen can convert `id_ed25519`). Prefer OpenSSH unless you have a reason not to.
+
+### ChromeOS
+
+Enable Linux (Crostini), open the Linux terminal, then use the Linux `ssh` commands above. The crosh `ssh` command is more limited; Crostini is the supported path.
+
+### Android
+
+[Termux](https://termux.dev/) (F-Droid or GitHub; the Play build is stale):
+
+```bash
+pkg install openssh
+ssh frank@HOST -p 2222
+```
+
+JuiceSSH and Termius work too: host `HOST`, port `2222`, protocol SSH.
+
+### iOS / iPadOS
+
+There is no system `ssh` in Shortcuts. Use **Blink Shell**, **Termius**, or **Prompt**: host `HOST`, port `2222`, SSH. Blink: `ssh frank@HOST -p 2222`.
+
+### What this is not
+
+Do not point HexChat, WeeChat, irssi, mIRC, or Revolution IRC at port 6667 / 6697. shrc does not speak the IRC wire protocol on the network. Those apps cannot join. Use SSH or the web client.
+
+Usernames `root`, `git`, `anonymous`, and `anon` over SSH are treated as guests (`Guest######`).
 
 ## Identity
 
@@ -75,7 +179,7 @@ The first registered nick on a fresh database is granted network oper. After tha
 
 ## The client
 
-The TUI is a single-screen IRC client (irssi-shaped):
+After you SSH or open the web terminal, you get a full-screen **text UI** (irssi-shaped). It is not a separate IRC client you install:
 
 - Left: buffers (`*server*`, channels, queries). Unread is a yellow dot. Ctrl+N / Ctrl+P cycle. Click a buffer to switch.
 - Center: messages, newest at the bottom. PgUp / PgDn or the wheel for scrollback. Mentions of your nick highlight.

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>shrc — how to connect</title>
+  <meta name="description" content="Connect to shrc over SSH from Linux, macOS, Windows PowerShell, ChromeOS, Android, and iOS. No IRC port.">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body class="crt-active">
+  <div class="crt-overlay"></div>
+  <main class="container doc-page">
+    <header class="stagger stagger-1 masthead">
+      <div class="masthead-row">
+        <a href="/" class="wordmark" style="text-decoration:none;">shrc</a>
+        <a href="/" class="text-btn">← home</a>
+      </div>
+      <p class="tagline">how to connect — SSH or the web app. not port 6667.</p>
+    </header>
+
+    <section class="stagger stagger-2 motd-block">
+      <div class="kicker"># summary</div>
+      <pre class="motd">ssh HOST -p 2222
+ssh frank@HOST -p 2222
+or open the web client on port 3000
+
+no password prompt.
+your ssh public key is your identity.
+hexchat / weechat / irssi cannot dial this as an irc server.</pre>
+    </section>
+
+    <section class="stagger stagger-3">
+      <div class="kicker"># web — any OS</div>
+      <p class="doc-p">Open the site, click <strong>open the web client</strong>. You land as <code>Guest######</code>. Web sessions do not keep an SSH key; use <code>/identify</code> each visit if the nick is registered.</p>
+    </section>
+
+    <section class="stagger stagger-3">
+      <div class="kicker"># linux</div>
+      <p class="doc-p">OpenSSH is already installed on current Ubuntu, Debian, Fedora, Arch, and openSUSE. Any terminal is fine (GNOME Terminal, Konsole, kitty, foot).</p>
+      <pre class="motd"># only if `ssh` is missing:
+sudo apt install -y openssh-client          # Ubuntu/Debian
+sudo dnf install -y openssh-clients         # Fedora
+sudo pacman -S openssh                      # Arch
+
+ssh HOST -p 2222
+ssh frank@HOST -p 2222
+ssh-keygen -t ed25519 -C "you@shrc"         # optional, recommended</pre>
+    </section>
+
+    <section class="stagger stagger-4">
+      <div class="kicker"># macOS</div>
+      <p class="doc-p">Terminal.app, iTerm2, Ghostty, or Kitty. OpenSSH ships with macOS. No extra package.</p>
+      <pre class="motd">ssh HOST -p 2222
+ssh frank@HOST -p 2222
+ssh-keygen -t ed25519 -C "you@shrc"</pre>
+      <p class="doc-p">Keys go to <code>~/.ssh/id_ed25519</code>. Storing the key in Keychain is optional.</p>
+    </section>
+
+    <section class="stagger stagger-4">
+      <div class="kicker"># windows 11 / windows 10 (1809+)</div>
+      <p class="doc-p">Use <strong>OpenSSH from PowerShell</strong> or <strong>Windows Terminal</strong>. This is the current Microsoft client. You do not need PuTTY.</p>
+      <p class="doc-p">Check it is installed (Windows 11 usually has it already):</p>
+      <pre class="motd">Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Client*'</pre>
+      <p class="doc-p">If State is not Installed, run this in an <strong>elevated</strong> PowerShell, or Settings → System → Optional features → OpenSSH Client:</p>
+      <pre class="motd">Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0</pre>
+      <p class="doc-p">Connect (PowerShell, Windows Terminal, or cmd):</p>
+      <pre class="motd">ssh HOST -p 2222
+ssh frank@HOST -p 2222
+ssh-keygen -t ed25519 -C "you@shrc"</pre>
+      <p class="doc-p">Key file: <code>$env:USERPROFILE\.ssh\id_ed25519</code>. PowerShell 5.1 and PowerShell 7 both call the same <code>ssh.exe</code>.</p>
+      <p class="doc-p"><strong>WSL:</strong> use the Linux commands from the WSL distro shell.</p>
+      <p class="doc-p"><strong>PuTTY</strong> (optional): host HOST, port 2222, type SSH. Convert your key with PuTTYgen if you already live in PuTTY. Prefer OpenSSH otherwise.</p>
+    </section>
+
+    <section class="stagger stagger-5">
+      <div class="kicker"># chromeOS</div>
+      <p class="doc-p">Turn on Linux (Crostini), open the Linux terminal, then the same Linux <code>ssh</code> commands. crosh is more limited; Crostini is the supported path.</p>
+    </section>
+
+    <section class="stagger stagger-5">
+      <div class="kicker"># android</div>
+      <p class="doc-p">Termux (F-Droid or GitHub — the Play build is stale):</p>
+      <pre class="motd">pkg install openssh
+ssh frank@HOST -p 2222</pre>
+      <p class="doc-p">JuiceSSH and Termius: host HOST, port 2222, protocol SSH.</p>
+    </section>
+
+    <section class="stagger stagger-5">
+      <div class="kicker"># iOS / iPadOS</div>
+      <p class="doc-p">No system ssh. Use Blink Shell, Termius, or Prompt. Host HOST, port 2222, SSH. In Blink: <code>ssh frank@HOST -p 2222</code>.</p>
+    </section>
+
+    <section class="stagger stagger-5">
+      <div class="kicker"># first connect</div>
+      <p class="doc-p">The host key prompt is normal. Type <code>yes</code>. There is no SSH password. If a client asks for a password, it did not send a key and the server fell back to anonymous — that is still fine; you will be <code>Guest######</code>.</p>
+      <p class="doc-p">After you are in: <code>/nick alice</code>, <code>/join #lounge</code>, <code>/help</code>. <code>/quit</code> or Ctrl+C leaves.</p>
+    </section>
+
+    <footer>
+      <a href="/">← home</a>
+      · also in the <a href="https://github.com/lord3nd3r/SHRC#how-to-connect">readme</a>
+    </footer>
+  </main>
+</body>
+</html>

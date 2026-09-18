@@ -292,6 +292,19 @@ body.crt-active .crt-overlay { opacity: 0.55; }
 }
 #xterm-container { width: 100%; height: 100%; }
 
+.doc-page .doc-p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0 0 0.75rem;
+}
+.doc-page .doc-p code,
+.feature-desc code {
+  color: #f0f6fc;
+  font-size: 0.8em;
+}
+.doc-page section { margin-bottom: 1.75rem; }
+.doc-page .wordmark { font-size: 1.5rem; }
+
 footer {
   border-top: 1px solid var(--border-color);
   padding-top: 1.4rem;

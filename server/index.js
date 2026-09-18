@@ -33,6 +33,10 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(ROOT_DIR, 'index.html'));
 });
 
+app.get('/connect', (req, res) => {
+  res.sendFile(path.join(ROOT_DIR, 'connect.html'));
+});
+
 app.get('/install.sh', (req, res) => {
   res.type('application/x-sh').sendFile(path.join(CLI_DIR, 'install.sh'));
 });

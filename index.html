@@ -20,9 +20,9 @@
         <pre class="wordmark">shrc</pre>
         <div id="live-status-badge" class="live-status">checking status…</div>
       </div>
-      <p class="tagline">irc. anonymous until you say otherwise.</p>
+      <p class="tagline">ssh or the browser. anonymous until you say otherwise.</p>
       <div class="meta-row">
-        <span>ssh in · zero signup</span>
+        <span>ssh in · zero signup · no irc port</span>
         <span class="dot-sep">·</span>
         <button id="crt-toggle-btn" class="text-btn">toggle crt</button>
       </div>
@@ -38,7 +38,7 @@
           </div>
           <span class="copy-badge" id="copy-badge-ssh">copy</span>
         </div>
-        <div class="cmd-sub">any ssh client. no password. /nick to pick a name.</div>
+        <div class="cmd-sub">OpenSSH — not HexChat. no password. /nick to pick a name.</div>
       </button>
 
       <button class="cmd-box cmd-box-accent" type="button" onclick="window.openWebTerminal()">
@@ -53,11 +53,11 @@
     <section class="stagger stagger-3 motd-block">
       <div class="kicker"># motd</div>
       <pre class="motd">welcome to shrc
-you start as Guest###### unless you ssh Frank@host
+you start as Guest###### unless you ssh frank@host
 the same ssh key auto-identifies the nick it registered
-/nick End3r then /identify   (30 seconds)
+/nick alice then /identify   (30 seconds)
 /cs register                 keep founder/op/voice
-/ns /cs /ms /os /bs /hs      NickServ ChanServ MemoServ OperServ BotServ HostServ
+/ns /cs /ms /os /bs /hs      services
 /help                        the rest</pre>
     </section>
 
@@ -77,6 +77,31 @@ the same ssh key auto-identifies the nick it registered
           <div class="feature-desc">first joiner of a new channel is op. then <span class="inline-cmd">/op userone</span> and <span class="inline-cmd">/deop user2</span>.</div>
         </div>
       </div>
+    </section>
+
+    <section class="stagger stagger-4">
+      <div class="kicker"># ssh from your OS</div>
+      <div class="feature-list">
+        <div class="feature-card">
+          <div class="feature-title">linux / macOS</div>
+          <div class="feature-desc"><code>ssh HOST -p 2222</code> — OpenSSH is already there. Optional: <code>ssh-keygen -t ed25519</code>.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-title">windows (powershell)</div>
+          <div class="feature-desc">Windows 11 has OpenSSH. Same command in PowerShell or Windows Terminal: <code>ssh HOST -p 2222</code>.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-title">phone / chromebook</div>
+          <div class="feature-desc">Termux, Blink, Termius, or ChromeOS Linux. Port 2222, protocol SSH — not IRC.</div>
+        </div>
+      </div>
+      <a class="cmd-box" href="/connect">
+        <div class="cmd-row">
+          <span class="cmd-text">full connect guide</span>
+          <span class="copy-badge">/connect →</span>
+        </div>
+        <div class="cmd-sub">linux, macOS, windows powershell, chromeOS, android, iOS — install ssh, keys, first prompt</div>
+      </a>
     </section>
 
     <section class="stagger stagger-5">
