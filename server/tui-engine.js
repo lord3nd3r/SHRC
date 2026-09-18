@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { irc, queryPeer } from './irc.js';
-import { mircToAnsi, wrapMirc } from './mirc.js';
+import { mircToAnsi, wrapMirc, stripMirc } from './mirc.js';
 
 const ANSI = {
   clear: '\x1b[2J\x1b[H',
@@ -454,7 +454,7 @@ export class TUISession {
       const type = m.type || 'privmsg';
       if (type === 'join' || type === 'part' || type === 'quit' || type === 'nick' || type === 'mode' || type === 'kick' || type === 'topic' || type === 'server') {
         const color = type === 'kick' ? ANSI.red : type === 'topic' || type === 'mode' ? ANSI.yellow : ANSI.gray;
-        const wrapped = wrapText(String(m.text || '').replace(/[\x02\x03\x0f\x16\x1d\x1f]/g, ''), Math.max(16, centerWidth - 10));
+        const wrapped = wrapText(stripMirc(m.text), Math.max(16, centerWidth - 10));
         wrapped.forEach((w, i) => {
           const nickCol = i === 0 ? ANSI.dim + padLeft('*', nickWidth) + ANSI.reset : ' '.repeat(nickWidth);
           lines.push(`${i === 0 ? time : '     '} ${nickCol} ${color}${w}${ANSI.reset}`);
@@ -462,18 +462,18 @@ export class TUISession {
         continue;
       }
       if (type === 'action') {
-        const wrapped = wrapText(`* ${m.author} ${m.text}`, Math.max(16, centerWidth - 10));
+        const wrapped = wrapMirc(`* ${m.author} ${m.text}`, Math.max(16, centerWidth - 10));
         wrapped.forEach((w, i) => {
           const nickCol = i === 0 ? ANSI.magenta + padLeft('*', nickWidth) + ANSI.reset : ' '.repeat(nickWidth);
-          lines.push(`${i === 0 ? time : '     '} ${nickCol} ${ANSI.magenta}${w}${ANSI.reset}`);
+          lines.push(`${i === 0 ? time : '     '} ${nickCol} ${w}`);
         });
         continue;
       }
       if (type === 'notice') {
-        const wrapped = wrapText(m.text, textWidth);
+        const wrapped = wrapMirc(m.text, textWidth);
         wrapped.forEach((w, i) => {
           const nickCol = i === 0 ? ANSI.yellow + padLeft('-' + m.author + '-', nickWidth) + ANSI.reset : ' '.repeat(nickWidth);
-          lines.push(`${i === 0 ? time : '     '} ${nickCol} ${ANSI.yellow}${w}${ANSI.reset}`);
+          lines.push(`${i === 0 ? time : '     '} ${nickCol} ${w}`);
         });
         continue;
       }

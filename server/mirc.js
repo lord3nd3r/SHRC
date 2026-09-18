@@ -1,18 +1,15 @@
-const FG = [
-  15, 0, 4, 2, 9, 88, 5, 208,
-  11, 10, 6, 14, 12, 13, 8, 7
-];
-const BG = FG;
+const FG16 = [97, 30, 34, 32, 31, 33, 35, 33, 93, 92, 36, 96, 94, 95, 90, 37];
+const BG16 = [107, 40, 44, 42, 41, 43, 45, 43, 103, 102, 46, 106, 104, 105, 100, 47];
 
 function ansiFg(n) {
   if (n == null || n < 0) return '';
-  const c = n < 16 ? FG[n] : Math.min(n, 98);
-  return `\x1b[38;5;${c}m`;
+  if (n < 16) return `\x1b[${FG16[n]}m`;
+  return `\x1b[38;5;${Math.min(n, 98)}m`;
 }
 function ansiBg(n) {
   if (n == null || n < 0) return '';
-  const c = n < 16 ? BG[n] : Math.min(n, 98);
-  return `\x1b[48;5;${c}m`;
+  if (n < 16) return `\x1b[${BG16[n]}m`;
+  return `\x1b[48;5;${Math.min(n, 98)}m`;
 }
 
 function readNum(s, i) {
@@ -75,6 +72,10 @@ export function tokenizeMirc(s) {
 
 export function visibleLength(s) {
   return tokenizeMirc(s).reduce((n, t) => n + t.text.length, 0);
+}
+
+export function stripMirc(s) {
+  return tokenizeMirc(s).map((t) => t.text).join('');
 }
 
 function stylePrefix(t) {
