@@ -16,6 +16,14 @@ npm install
 node server/index.js
 ```
 
+If `npm install` dies with `ENOENT ... mkdir .../node_modules/@...`, a previous failed install left a broken `node_modules`. Wipe it and try again:
+
+```bash
+rm -rf node_modules
+git pull
+npm install
+```
+
 That starts:
 
 | Service | Default |

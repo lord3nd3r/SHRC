@@ -3,7 +3,6 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Server as SocketIOServer } from 'socket.io';
-import cors from 'cors';
 
 import { state } from './state.js';
 import { irc } from './irc.js';
@@ -25,7 +24,13 @@ const io = new SocketIOServer(server, {
 const HTTP_PORT = process.env.PORT || 3000;
 const SSH_PORT = process.env.SSH_PORT || 2222;
 
-app.use(cors());
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 app.use(express.json({ limit: '32kb' }));
 app.use('/src', express.static(SRC_DIR));
 
