@@ -6,6 +6,12 @@
   <title>shrc — how to connect</title>
   <meta name="description" content="Connect to shrc over SSH from Linux, macOS, Windows PowerShell, ChromeOS, Android, and iOS.">
   <link rel="stylesheet" href="/src/style.css">
+  <script>
+    try {
+      var t = localStorage.getItem('shrc-theme');
+      if (t) document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
 </head>
 <body>
   <div class="crt-overlay" aria-hidden="true"></div>
@@ -13,7 +19,16 @@
     <header class="masthead">
       <div class="masthead-row">
         <a href="/" class="wordmark">shrc</a>
-        <div style="display:flex;gap:1rem;align-items:center;">
+        <div class="topbar-right">
+          <label class="theme-pick">theme
+            <select id="theme-select" aria-label="color theme">
+              <option value="phosphor">phosphor</option>
+              <option value="amber">amber</option>
+              <option value="ice">ice</option>
+              <option value="slate">slate</option>
+              <option value="paper">paper</option>
+            </select>
+          </label>
           <button type="button" class="crt-btn" id="crt-toggle-btn">crt off</button>
           <a href="/">← home</a>
         </div>
@@ -103,22 +118,9 @@ ssh frank@HOST -p 2222</pre>
       · also in the <a href="https://github.com/lord3nd3r/SHRC#how-to-connect">readme</a>
     </footer>
   </main>
-  <script>
-    function setCrt(on) {
-      document.body.classList.toggle('crt-active', on);
-      const btn = document.getElementById('crt-toggle-btn');
-      if (btn) {
-        btn.textContent = on ? 'crt on' : 'crt off';
-        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-      }
-      try { localStorage.setItem('shrc-crt', on ? '1' : '0'); } catch {}
-    }
-    let crt = true;
-    try { crt = localStorage.getItem('shrc-crt') !== '0'; } catch {}
-    setCrt(crt);
-    document.getElementById('crt-toggle-btn')?.addEventListener('click', () => {
-      setCrt(!document.body.classList.contains('crt-active'));
-    });
+  <script type="module">
+    import { initAppearance } from '/src/site-theme.js';
+    initAppearance();
   </script>
 </body>
 </html>

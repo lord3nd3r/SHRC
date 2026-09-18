@@ -9,6 +9,12 @@
   <link rel="stylesheet" href="/src/vendor/xterm.css">
   <script src="/src/vendor/xterm.js"></script>
   <script src="/src/vendor/addon-fit.js"></script>
+  <script>
+    try {
+      var t = localStorage.getItem('shrc-theme');
+      if (t) document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
 </head>
 <body>
   <div class="crt-overlay" aria-hidden="true"></div>
@@ -19,7 +25,18 @@
         <span>shrc://tty0</span>
         <div id="live-status-badge" class="live-status">link…</div>
       </div>
-      <button type="button" class="crt-btn" id="crt-toggle-btn" aria-pressed="false">crt off</button>
+      <div class="topbar-right">
+        <label class="theme-pick">theme
+          <select id="theme-select" aria-label="color theme">
+            <option value="phosphor">phosphor</option>
+            <option value="amber">amber</option>
+            <option value="ice">ice</option>
+            <option value="slate">slate</option>
+            <option value="paper">paper</option>
+          </select>
+        </label>
+        <button type="button" class="crt-btn" id="crt-toggle-btn" aria-pressed="false">crt off</button>
+      </div>
     </div>
 
     <div class="logo-wrap">
@@ -116,7 +133,7 @@ your ssh key binds on identify — reconnect comes in already you
     </button>
 
     <footer>
-      abuse gets /kick /ban /akill. crt mode is the scanlines — toggle top right.
+      abuse gets /kick /ban /akill. theme + crt, top right.
     </footer>
   </div>
 
@@ -137,18 +154,10 @@ your ssh key binds on identify — reconnect comes in already you
 
   <script type="module">
     import { initTerminalClient } from '/src/terminal-client.js';
-
-    function setCrt(on) {
-      document.body.classList.toggle('crt-active', on);
-      const btn = document.getElementById('crt-toggle-btn');
-      if (btn) {
-        btn.textContent = on ? 'crt on' : 'crt off';
-        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-      }
-      try { localStorage.setItem('shrc-crt', on ? '1' : '0'); } catch {}
-    }
+    import { initAppearance } from '/src/site-theme.js';
 
     document.addEventListener('DOMContentLoaded', () => {
+      initAppearance();
       const host = location.hostname && location.hostname !== '127.0.0.1'
         ? location.hostname
         : 'localhost';
@@ -166,13 +175,6 @@ your ssh key binds on identify — reconnect comes in already you
       if (insBtn) insBtn.setAttribute('data-copy', installCmd);
 
       initTerminalClient('xterm-container', 'close-terminal-btn');
-
-      let crt = true;
-      try { crt = localStorage.getItem('shrc-crt') !== '0'; } catch {}
-      setCrt(crt);
-      document.getElementById('crt-toggle-btn')?.addEventListener('click', () => {
-        setCrt(!document.body.classList.contains('crt-active'));
-      });
 
       fetch('/status')
         .then((r) => r.text())
