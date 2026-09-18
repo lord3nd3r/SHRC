@@ -80,6 +80,8 @@ export function initTerminalClient(containerId, closeBtnId) {
   let lastRows = 0;
   let sizeTimer = null;
   let closing = false;
+  let lastRx = Date.now();
+  let closeReason = '';
 
   function clientPrefs() {
     let clientId = '';
@@ -229,7 +231,14 @@ export function initTerminalClient(containerId, closeBtnId) {
 
   function startPing() {
     stopPing();
-    pingTimer = setInterval(() => send({ op: 'ping' }), 25000);
+    lastRx = Date.now();
+    pingTimer = setInterval(() => {
+      send({ op: 'ping' });
+      if (socket && socket.readyState === 1 && Date.now() - lastRx > 45000) {
+        closeReason = 'ping timeout';
+        try { socket.close(); } catch {}
+      }
+    }, 25000);
   }
 
   function scheduleReconnect() {
@@ -262,6 +271,7 @@ export function initTerminalClient(containerId, closeBtnId) {
         startPing();
       });
       socket.addEventListener('message', (ev) => {
+        lastRx = Date.now();
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
         if (msg.op === 'ping') { send({ op: 'pong' }); return; }
@@ -285,7 +295,13 @@ export function initTerminalClient(containerId, closeBtnId) {
       socket.addEventListener('close', () => {
         stopPing();
         started = false;
-        if (!closing) scheduleReconnect();
+        if (closing) return;
+        const why = closeReason || 'connection lost';
+        closeReason = '';
+        if (term) {
+          term.write(`\r\n\x1b[1;31m*** disconnected (${why})\x1b[0m\r\n\x1b[33m*** reconnecting...\x1b[0m\r\n`);
+        }
+        scheduleReconnect();
       });
       socket.addEventListener('error', () => {});
     }

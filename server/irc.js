@@ -9,8 +9,8 @@ const ENFORCE_MS = 30000;
 function defaultMotd() {
   return [
     'welcome to shrc',
-    'guests are Guest######. ssh Frank@host claims Frank.',
-    'your key or web id auto-identifies a nick bound to it.',
+    'guests are Guest######. ssh Frank@host is Frank, even if the key is bound to another nick.',
+    'a bound key auto-identifies only when you connect as that nick (or a grouped nick).',
     'else /nick then /identify (30 seconds) or you get renamed.',
     'services: /ns /cs /ms /os /bs /hs   /watch  /ignore',
     '/cs register  to keep founder/op/voice across reconnects.',
@@ -201,13 +201,13 @@ export class IrcNetwork {
   accountByFingerprint(fingerprint) {
     const fp = String(fingerprint || '');
     if (!isStickyFingerprint(fp)) return null;
-    const hits = Object.values(state.accounts).filter((a) => a.fingerprint === fp);
+    const hits = Object.values(state.accounts).filter((a) => !a.groupedTo && a.fingerprint === fp);
     if (!hits.length) return null;
     return hits.sort((a, b) => (a.registeredAt || 0) - (b.registeredAt || 0))[0];
   }
 
   syncEnforce(client) {
-    const owns = client.identified && lower(client.account) === lower(client.nick);
+    const owns = this.ownsNick(client);
     if (!state.isNickProtected(client.nick) || owns) {
       this.clearEnforce(client);
       return [];
@@ -219,7 +219,7 @@ export class IrcNetwork {
 
   enforceTimeout(client) {
     if (!this.clients.has(client.id)) return;
-    if (client.identified && lower(client.account) === lower(client.nick)) return;
+    if (this.ownsNick(client)) return;
     if (!state.isNickProtected(client.nick)) return;
     const old = client.nick;
     const guest = this.allocGuest();
@@ -251,11 +251,22 @@ export class IrcNetwork {
 
     const fp = fingerprint || 'anon:' + crypto.randomBytes(4).toString('hex');
     const bound = this.accountByFingerprint(fp);
-    const remembered = (!bound && fp.startsWith('web:') && state.webNicks[fp]) ? state.webNicks[fp] : null;
+    const requested = (nick && isValidNick(nick) && !RESERVED.has(lower(nick))) ? nick : null;
+    const remembered = (!requested && fp.startsWith('web:') && state.webNicks[fp]) ? state.webNicks[fp] : null;
 
+    if (isStickyFingerprint(fp)) {
+      for (const other of [...this.clients.values()]) {
+        if (other.fingerprint === fp) {
+          other.onKill('Replaced by a new session with the same SSH key');
+          this.disconnect(other.id, 'Replaced (same SSH key)');
+        }
+      }
+    }
+
+    const want = requested || (bound && bound.nickname) || remembered;
     const client = {
       id,
-      nick: this.guestNick(bound ? bound.nickname : (nick || remembered)),
+      nick: this.guestNick(want),
       fingerprint: fp,
       ip: ip || '0.0.0.0',
       ident: ident || identFromFp(fp),
@@ -275,36 +286,37 @@ export class IrcNetwork {
     };
 
     const extraNotices = [];
-    if (bound) {
-      const taken = this.nicks.get(lower(bound.nickname));
-      if (taken && taken.fingerprint === fp) {
-        taken.onKill('Replaced by a new session with the same SSH key');
-        this.disconnect(taken.id, 'Replaced (same SSH key)');
-        client.nick = this.guestNick(bound.nickname);
-      } else if (taken) {
-        extraNotices.push({
-          type: 'notice',
-          author: 'NickServ',
-          text: `${bound.nickname} is in use. /ns ghost ${bound.nickname} <password> or wait.`,
-          timestamp: Date.now()
-        });
-      } else {
-        client.nick = bound.nickname;
-        client.identified = true;
-        client.account = bound.nickname;
-        client.oper = !!bound.isOper;
-        extraNotices.push({
-          type: 'notice',
-          author: 'NickServ',
-          text: `Identity recognized. You are identified as ${bound.nickname}.`,
-          timestamp: Date.now()
-        });
-      }
-    } else if (nick && state.isNickProtected(nick) && isSshKeyFingerprint(fp)) {
+    const boundOwns = bound && (
+      lower(bound.nickname) === lower(client.nick)
+      || (bound.nicks || []).some((n) => lower(n) === lower(client.nick))
+    );
+    if (bound && boundOwns) {
+      this.markIdentified(client, bound);
       extraNotices.push({
         type: 'notice',
         author: 'NickServ',
-        text: `${nick} is registered. /identify <password> to bind this SSH key for next time.`,
+        text: `Identity recognized. You are identified as ${bound.nickname}.`,
+        timestamp: Date.now()
+      });
+    } else if (bound && requested && lower(requested) === lower(bound.nickname) && lower(client.nick) !== lower(bound.nickname)) {
+      extraNotices.push({
+        type: 'notice',
+        author: 'NickServ',
+        text: `${bound.nickname} is in use. /ns ghost ${bound.nickname} <password> or wait.`,
+        timestamp: Date.now()
+      });
+    } else if (bound && requested && lower(requested) !== lower(bound.nickname)) {
+      extraNotices.push({
+        type: 'notice',
+        author: 'NickServ',
+        text: `This SSH key is bound to ${bound.nickname}. You are ${client.nick}. /ns identify ${bound.nickname} <password> then /ns group if you want this nick on that account.`,
+        timestamp: Date.now()
+      });
+    } else if (requested && state.isNickProtected(requested) && isSshKeyFingerprint(fp)) {
+      extraNotices.push({
+        type: 'notice',
+        author: 'NickServ',
+        text: `${requested} is registered. /identify <password> to bind this SSH key for next time.`,
         timestamp: Date.now()
       });
     }
@@ -404,56 +416,117 @@ export class IrcNetwork {
     return list;
   }
 
+  accessKeys(client) {
+    const keys = new Set([lower(client.nick)]);
+    if (client.identified && client.account) {
+      keys.add(lower(client.account));
+      const acc = state.getAccount(client.account);
+      for (const n of acc?.nicks || []) keys.add(lower(n));
+    }
+    return keys;
+  }
+
+  ownsNick(client, nick = client.nick) {
+    if (!client?.identified || !client.account) return false;
+    const acc = state.getAccount(client.account);
+    if (!acc || acc.groupedTo) return false;
+    const key = lower(nick);
+    if (lower(acc.nickname) === key) return true;
+    return (acc.nicks || []).some((n) => lower(n) === key);
+  }
+
+  markIdentified(client, account) {
+    client.identified = true;
+    client.account = account.nickname;
+    client.oper = !!account.isOper;
+    this.clearEnforce(client);
+    this.loadAccountPrefs(client);
+    if (account && isStickyFingerprint(client.fingerprint)) {
+      account.fingerprint = client.fingerprint;
+    }
+  }
+
+  restoreAccess(client, { announce = false } = {}) {
+    for (const ch of [...client.channels]) {
+      this.applyAccess(client, ch, { announce });
+      this.rememberChannel(client, ch, true);
+    }
+  }
+
+  dropStatus(client) {
+    for (const ch of [...client.channels]) {
+      const key = normalizeChannel(ch);
+      const p = this.prefix(client, key);
+      if (!p) continue;
+      let spec;
+      if (p === '~') spec = `-qao ${client.nick} ${client.nick} ${client.nick}`;
+      else if (p === '&') spec = `-ao ${client.nick} ${client.nick}`;
+      else if (p === '@') spec = `-o ${client.nick}`;
+      else if (p === '%') spec = `-h ${client.nick}`;
+      else spec = `-v ${client.nick}`;
+      this.announceMode(key, 'ChanServ', spec, 'services');
+    }
+  }
+
   accessRank(client, channel) {
     if (client.oper) return 100;
+    if (!client.identified) return 0;
     const ch = state.channels[normalizeChannel(channel)];
     if (!ch) return 0;
-    const nick = lower(client.identified ? client.account || client.nick : client.nick);
-    if (ch.registered && ch.settings?.secure && !client.identified) return 0;
-    return flagRank(ch.flags?.[nick]);
+    let best = 0;
+    for (const k of this.accessKeys(client)) {
+      best = Math.max(best, flagRank(ch.flags?.[k]));
+      if (ch.founder === k) best = Math.max(best, 50);
+    }
+    return best;
   }
 
   isFounder(client, channel) {
-    if (client.oper) return true;
     const ch = state.channels[normalizeChannel(channel)];
-    if (!ch) return false;
-    return client.identified && ch.founder === lower(client.account || client.nick);
+    if (!ch || !client.identified) return false;
+    const ln = lower(client.nick);
+    if ((ch.founders || []).includes(ln)) return true;
+    for (const k of this.accessKeys(client)) {
+      if (ch.founder === k) return true;
+      if ((ch.flags?.[k] || '').includes('F')) return true;
+    }
+    return false;
   }
 
   isOp(client, channel) {
     if (client.oper) return true;
+    if (!client.identified) return false;
     const ch = state.channels[normalizeChannel(channel)];
     if (!ch) return false;
-    const ln = lower(client.nick);
-    if (ch.ops.includes(ln) || (ch.admins || []).includes(ln)) return true;
-    if (state.isNickProtected(client.nick) && !client.identified) return false;
+    for (const k of this.accessKeys(client)) {
+      if (ch.ops.includes(k) || (ch.admins || []).includes(k)) return true;
+    }
     return this.accessRank(client, channel) >= 30;
   }
 
   isHalfop(client, channel) {
     if (this.isOp(client, channel)) return true;
+    if (!client.identified) return false;
     const ch = state.channels[normalizeChannel(channel)];
     if (!ch) return false;
     if ((ch.halfops || []).includes(lower(client.nick))) return true;
-    if (state.isNickProtected(client.nick) && !client.identified) return false;
     return this.accessRank(client, channel) >= 20;
   }
 
   isVoice(client, channel) {
     if (this.isHalfop(client, channel)) return true;
+    if (!client.identified) return false;
     const ch = state.channels[normalizeChannel(channel)];
     if (!ch) return false;
     if (ch.voices.includes(lower(client.nick))) return true;
-    if (state.isNickProtected(client.nick) && !client.identified) return false;
     return this.accessRank(client, channel) >= 10;
   }
 
   prefix(client, channel) {
+    if (!client?.identified) return '';
     const key = normalizeChannel(channel);
-    const ch = state.channels[key];
-    const ln = lower(client.nick);
-    if (this.isFounder(client, key) || (ch && ch.founder === ln && client.identified)) return '~';
-    if ((ch && (ch.admins || []).includes(ln)) || this.accessRank(client, key) >= 40) return '&';
+    if (this.isFounder(client, key)) return '~';
+    if (this.accessRank(client, key) >= 40) return '&';
     if (this.isOp(client, key)) return '@';
     if (this.isHalfop(client, key) && !this.isOp(client, key)) return '%';
     if (this.isVoice(client, key)) return '+';
@@ -461,7 +534,7 @@ export class IrcNetwork {
   }
 
   setLive(ch, nickLower, letter, give) {
-    const map = { o: 'ops', v: 'voices', h: 'halfops', a: 'admins' };
+    const map = { o: 'ops', v: 'voices', h: 'halfops', a: 'admins', q: 'founders' };
     const arr = map[letter];
     if (!arr || !ch) return;
     if (!ch[arr]) ch[arr] = [];
@@ -496,18 +569,42 @@ export class IrcNetwork {
     this._announce(channel, 'mode', by, `mode/${channel} [${spec}] by ${by}`, { fingerprint: fingerprint || 'shrc' });
   }
 
-  applyAccess(client, channel) {
+  applyAccess(client, channel, { announce = false } = {}) {
+    if (!client?.identified) return;
     const key = normalizeChannel(channel);
     const ch = state.ensureChannel(key);
-    if (!ch.registered) return;
-    if (ch.settings.secure && !client.identified) return;
-    const ln = lower(client.identified ? client.account || client.nick : client.nick);
-    const flags = ch.flags[ln] || '';
-    if (flags.includes('F') || flags.includes('A')) this.setLive(ch, ln, 'a', true);
-    if (flags.includes('F') || flags.includes('A') || flags.includes('O')) this.setLive(ch, ln, 'o', true);
-    if (flags.includes('H')) this.setLive(ch, ln, 'h', true);
-    if (flags.includes('V')) this.setLive(ch, ln, 'v', true);
-    if (flags.includes('F')) ch.founder = ln;
+    const ln = lower(client.nick);
+    const granted = [];
+    if (!ch.registered) {
+      if (ch.founder === ln || ch.founder === lower(client.account) || !(ch.ops || []).length) {
+        this.setLive(ch, ln, 'o', true);
+        if (!ch.founder) ch.founder = lower(client.account || client.nick);
+        granted.push('o');
+      }
+    } else {
+      const keys = this.accessKeys(client);
+      let flags = '';
+      for (const k of keys) flags += (ch.flags[k] || '');
+      const founder = flags.includes('F') || [...keys].some((k) => ch.founder === k);
+      if (founder) {
+        this.setLive(ch, ln, 'q', true);
+        this.setLive(ch, ln, 'a', true);
+        this.setLive(ch, ln, 'o', true);
+        granted.push('q', 'a', 'o');
+      } else if (flags.includes('A')) {
+        this.setLive(ch, ln, 'a', true);
+        this.setLive(ch, ln, 'o', true);
+        granted.push('a', 'o');
+      } else if (flags.includes('O')) {
+        this.setLive(ch, ln, 'o', true);
+        granted.push('o');
+      }
+      if (flags.includes('H')) { this.setLive(ch, ln, 'h', true); granted.push('h'); }
+      if (flags.includes('V')) { this.setLive(ch, ln, 'v', true); granted.push('v'); }
+    }
+    if (announce && granted.length) {
+      this.announceMode(key, 'ChanServ', `+${granted.join('')} ${granted.map(() => client.nick).join(' ')}`, 'services');
+    }
   }
 
   setFlags(client, channel, nick, spec) {
@@ -520,7 +617,7 @@ export class IrcNetwork {
     if (!isValidNick(nick) && !ln) return fail('Invalid nick.');
     const target = this.findNick(nick);
     const live = [];
-    const letter = { F: 'a', A: 'a', O: 'o', H: 'h', V: 'v' };
+    const letter = { F: 'q', A: 'a', O: 'o', H: 'h', V: 'v' };
     let adding = String(spec).startsWith('-') ? false : true;
     let cur = ch.flags[ln] || '';
     for (const c of String(spec).toUpperCase()) {
@@ -538,7 +635,9 @@ export class IrcNetwork {
       }
       const mode = letter[c];
       if (mode) {
-        if (target && target.channels.has(key)) this.setLive(ch, ln, mode, adding);
+        if (target && target.channels.has(key) && (target.identified || target.isBot)) {
+          this.setLive(ch, ln, mode, adding);
+        }
         live.push((adding ? '+' : '-') + mode + ' ' + (target ? target.nick : nick));
       }
     }
@@ -812,8 +911,8 @@ export class IrcNetwork {
     client.channels.add(channel);
 
     if (!existed && !ch.registered) {
-      if (!ch.ops.includes(lower(client.nick))) ch.ops.push(lower(client.nick));
-      ch.founder = lower(client.nick);
+      ch.founder = lower(client.account || client.nick);
+      if (client.identified) this.setLive(ch, lower(client.nick), 'o', true);
     }
 
     this.applyAccess(client, channel);
@@ -900,22 +999,34 @@ export class IrcNetwork {
   _applyNick(client, newNick, { remapModes = true } = {}) {
     const old = client.nick;
     if (lower(old) === lower(newNick) && old === newNick) return old;
-    this.nicks.delete(lower(old));
-    client.nick = newNick;
-    this.nicks.set(lower(newNick), client);
 
-    if (client.identified && lower(client.account) !== lower(newNick)) {
+    let keepIdent = !!(client.identified && client.account);
+    if (keepIdent) {
+      const mine = state.getAccount(client.account);
+      const other = state.getAccount(newNick);
+      const same = !!(mine && other && lower(other.nickname) === lower(mine.nickname));
+      const free = !other;
+      keepIdent = same || free;
+    }
+    if (client.identified && !keepIdent) {
+      this.dropStatus(client);
       client.identified = false;
       client.account = null;
       client.oper = false;
     }
 
-    const steal = state.isNickProtected(newNick) && !(client.identified && lower(client.account) === lower(newNick));
+    this.nicks.delete(lower(old));
+    client.nick = newNick;
+    this.nicks.set(lower(newNick), client);
+
+    const steal = state.isNickProtected(newNick) && !this.ownsNick(client, newNick);
     for (const ch of client.channels) {
       const chan = state.channels[ch];
       if (chan && remapModes && !steal) {
-        chan.ops = chan.ops.map((n) => (n === lower(old) ? lower(newNick) : n));
-        chan.voices = chan.voices.map((n) => (n === lower(old) ? lower(newNick) : n));
+        for (const arr of ['ops', 'voices', 'halfops', 'admins', 'founders']) {
+          if (!chan[arr]) continue;
+          chan[arr] = chan[arr].map((n) => (n === lower(old) ? lower(newNick) : n));
+        }
       }
       this._announce(ch, 'nick', old, `${old} is now known as ${newNick}`, { fingerprint: client.fingerprint, extra: { newNick } });
     }
@@ -1076,6 +1187,9 @@ export class IrcNetwork {
     const name = target ? target.nick : nick;
     if (!isValidNick(name)) return fail('Invalid nick.');
     if (give && target && !target.channels.has(key)) return fail(`${name} is not on ${key}.`);
+    if (give && target && !target.identified && !target.isBot) {
+      return fail(`${name} must be identified to receive channel status.`);
+    }
     const ch = state.ensureChannel(key);
     const ln = lower(name);
     if (target?.isBot && !give) {
@@ -1619,35 +1733,28 @@ export class IrcNetwork {
         if (!args[0]) return fail('Usage: /register <password> [email]');
         const res = state.registerNick(client.nick, args[0], args[1] || '', client.fingerprint);
         if (res.success) {
-          client.identified = true;
-          client.account = client.nick;
           const acc = state.getAccount(client.nick);
-          client.oper = !!(acc && acc.isOper);
-          this.clearEnforce(client);
-          if (acc && isStickyFingerprint(client.fingerprint)) acc.fingerprint = client.fingerprint;
+          if (acc) {
+            this.markIdentified(client, acc);
+            this.restoreAccess(client, { announce: true });
+          }
         }
         return res.success ? ok({ status: res.message }) : fail(res.message);
       }
 
       case 'identify':
       case 'id': {
-        if (!args[0]) return fail('Usage: /identify <password>');
-        const res = state.identifyNick(client.nick, args[0]);
+        if (!args[0]) return fail('Usage: /identify [nick] <password>');
+        const asNick = args.length >= 2 ? args[0] : client.nick;
+        const pass = args.length >= 2 ? args.slice(1).join(' ') : args[0];
+        const res = state.identifyNick(asNick, pass);
         if (res.success) {
-          client.identified = true;
-          client.account = client.nick;
-          client.oper = !!(res.account && res.account.isOper);
-          this.clearEnforce(client);
+          this.markIdentified(client, res.account);
           const extra = [];
           if (isStickyFingerprint(client.fingerprint)) {
-            res.account.fingerprint = client.fingerprint;
-            extra.push('This identity is now bound to your nick. Reconnect will auto-identify.');
+            extra.push('This SSH key auto-identifies when you connect as this nick (or a grouped nick).');
           }
-          this.loadAccountPrefs(client);
-          for (const ch of [...client.channels]) {
-            this.applyAccess(client, ch);
-            this.rememberChannel(client, ch, true);
-          }
+          this.restoreAccess(client, { announce: true });
           const ajoin = res.account.ajoin || [];
           for (const ch of ajoin) {
             if (!client.channels.has(normalizeChannel(ch))) {
@@ -1676,18 +1783,17 @@ export class IrcNetwork {
           stale.onKill(`Ghosted by ${client.nick}`);
           this.disconnect(stale.id, 'Ghosted');
         }
-        client.identified = true;
-        client.account = args[0];
-        client.oper = !!(res.account && res.account.isOper);
-        this.clearEnforce(client);
-        if (res.account && isStickyFingerprint(client.fingerprint)) res.account.fingerprint = client.fingerprint;
-        return this.changeNick(client, args[0]);
+        this.markIdentified(client, res.account);
+        const nickRes = this.changeNick(client, args[0]);
+        this.restoreAccess(client, { announce: true });
+        return nickRes;
       }
 
       case 'drop': {
         if (!args[0]) return fail('Usage: /drop <password>');
         const res = state.dropNick(client.nick, args[0]);
         if (res.success) {
+          this.dropStatus(client);
           client.identified = false;
           client.account = null;
           client.oper = false;
@@ -1771,9 +1877,9 @@ export class IrcNetwork {
         if (!acc) return fail('Register this nick first, then /identify, then /oper <password>.');
         if (!verifyPassword(pass, acc.passwordHash)) return fail('Invalid oper password (use your NickServ password).');
         if (!acc.isOper) return fail('Your account is not an oper. An existing oper must /opergrant you.');
-        client.identified = true;
-        client.account = client.nick;
+        this.markIdentified(client, acc);
         client.oper = true;
+        this.restoreAccess(client, { announce: true });
         return ok({ status: 'You are now a network operator.' });
       }
 

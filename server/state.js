@@ -51,6 +51,7 @@ export function normalizeChanRecord(ch) {
   if (!ch.voices) ch.voices = [];
   if (!ch.halfops) ch.halfops = [];
   if (!ch.admins) ch.admins = [];
+  if (!ch.founders) ch.founders = [];
   if (!ch.flags) ch.flags = {};
   if (!ch.akick) ch.akick = [];
   if (!ch.botserv) ch.botserv = { bot: '', fantasy: true, greet: '', dontkickops: true, dontkickvoices: false };
@@ -83,6 +84,7 @@ function defaultChannel(name, topic, extra = {}) {
     voices: extra.voices || [],
     halfops: extra.halfops || [],
     admins: extra.admins || [],
+    founders: extra.founders || [],
     founder: extra.founder || '',
     registered: extra.registered || false,
     flags: extra.flags || {},
@@ -200,11 +202,14 @@ class StateStore {
       if (data.webNicks) this.webNicks = data.webNicks;
 
       for (const acc of Object.values(this.accounts)) {
+        if (acc.groupedTo) continue;
         const n = String(acc.nickname || '').toLowerCase();
         if (n === 'late_architect' || n === 'end3r') acc.isOper = true;
         if (!acc.ajoin) acc.ajoin = [];
         if (!acc.ignores) acc.ignores = [];
         if (!acc.watch) acc.watch = [];
+        if (!acc.nicks) acc.nicks = [n];
+        else if (!acc.nicks.map((x) => String(x).toLowerCase()).includes(n)) acc.nicks.unshift(n);
       }
       for (const ch of Object.values(this.channels)) normalizeChanRecord(ch);
       const lounge = this.channels['#lounge'];
@@ -346,6 +351,7 @@ class StateStore {
       ajoin: [],
       ignores: [],
       watch: [],
+      nicks: [key],
       lastSeen: Date.now()
     };
     this.onChange();
@@ -354,9 +360,8 @@ class StateStore {
   }
 
   identifyNick(nickname, password) {
-    const key = nickname.toLowerCase();
-    const account = this.accounts[key];
-    if (!account) {
+    const account = this.getAccount(nickname);
+    if (!account || account.groupedTo) {
       return { success: false, message: `Nickname '${nickname}' is not registered with NickServ.` };
     }
     if (!verifyPassword(password, account.passwordHash)) {
@@ -372,29 +377,88 @@ class StateStore {
     this.scheduleSave();
     return {
       success: true,
-      message: `Password accepted for '${nickname}'. You are now identified.`,
+      message: `Password accepted for '${account.nickname}'. You are now identified.`,
       account
     };
   }
 
   dropNick(nickname, password) {
-    const key = nickname.toLowerCase();
-    const account = this.accounts[key];
-    if (!account) return { success: false, message: `Nickname '${nickname}' is not registered.` };
+    const account = this.getAccount(nickname);
+    if (!account || account.groupedTo) return { success: false, message: `Nickname '${nickname}' is not registered.` };
     if (!verifyPassword(password, account.passwordHash)) {
       return { success: false, message: 'Invalid password.' };
     }
-    delete this.accounts[key];
+    const key = String(nickname || '').toLowerCase();
+    const main = String(account.nickname || '').toLowerCase();
+    if (key !== main) return this.ungroupNick(account.nickname, nickname);
+    for (const n of account.nicks || []) {
+      const nk = String(n).toLowerCase();
+      if (nk !== main && this.accounts[nk]?.groupedTo) delete this.accounts[nk];
+    }
+    delete this.accounts[main];
     this.onChange();
-    return { success: true, message: `Nickname '${nickname}' has been dropped from NickServ.` };
+    return { success: true, message: `Nickname '${account.nickname}' has been dropped from NickServ.` };
   }
 
   isNickProtected(nickname) {
-    return !!this.accounts[String(nickname || '').toLowerCase()];
+    const key = String(nickname || '').toLowerCase();
+    if (this.accounts[key]) return true;
+    return Object.values(this.accounts).some((a) => (a.nicks || []).map((n) => String(n).toLowerCase()).includes(key));
   }
 
   getAccount(nickname) {
-    return this.accounts[String(nickname || '').toLowerCase()] || null;
+    const key = String(nickname || '').toLowerCase();
+    let acc = this.accounts[key];
+    if (acc?.groupedTo) acc = this.accounts[String(acc.groupedTo).toLowerCase()];
+    if (acc) return acc;
+    for (const a of Object.values(this.accounts)) {
+      if ((a.nicks || []).some((n) => String(n).toLowerCase() === key)) return a;
+    }
+    return null;
+  }
+
+  groupNick(mainNick, nickToAdd) {
+    const acc = this.getAccount(mainNick);
+    if (!acc || acc.groupedTo) return { success: false, message: 'You are not registered.' };
+    const display = String(nickToAdd || '').trim();
+    if (!isValidNick(display)) return { success: false, message: 'Invalid nick.' };
+    const key = display.toLowerCase();
+    const main = String(acc.nickname || '').toLowerCase();
+    if (!acc.nicks) acc.nicks = [main];
+    if (key === main || acc.nicks.map((n) => String(n).toLowerCase()).includes(key)) {
+      return { success: true, message: `${display} is already grouped to ${acc.nickname}.` };
+    }
+    if (acc.nicks.length >= 16) {
+      return { success: false, message: 'You already have the maximum number of grouped nicks (16).' };
+    }
+    const existing = this.accounts[key];
+    if (existing && !existing.groupedTo) {
+      return { success: false, message: `Nick '${display}' is registered to another account. Drop it first.` };
+    }
+    if (existing && existing.groupedTo && existing.groupedTo !== main) {
+      return { success: false, message: `Nick '${display}' is grouped to another account.` };
+    }
+    acc.nicks.push(key);
+    this.accounts[key] = {
+      groupedTo: main,
+      nickname: display,
+      registeredAt: Date.now()
+    };
+    this.onChange();
+    return { success: true, message: `${display} is now grouped to ${acc.nickname}.` };
+  }
+
+  ungroupNick(mainNick, nickToRemove) {
+    const acc = this.getAccount(mainNick);
+    if (!acc) return { success: false, message: 'You are not registered.' };
+    const key = String(nickToRemove || '').toLowerCase();
+    if (key === acc.nickname.toLowerCase()) {
+      return { success: false, message: 'You cannot ungroup your main nick. /ns drop instead.' };
+    }
+    acc.nicks = (acc.nicks || []).filter((n) => n.toLowerCase() !== key);
+    if (this.accounts[key]?.groupedTo) delete this.accounts[key];
+    this.onChange();
+    return { success: true, message: `${nickToRemove} has been ungrouped.` };
   }
 
   setOper(nickname, isOper) {

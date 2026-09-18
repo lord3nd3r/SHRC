@@ -68,7 +68,7 @@ export function handleService(irc, client, buffer, service, text) {
 }
 
 function needIdent(client, svc) {
-  if (client.identified && lower(client.account) === lower(client.nick)) return null;
+  if (client.identified && client.account) return null;
   return fail(svc, 'You must be identified to a registered nick. /ns identify <password>');
 }
 
@@ -78,10 +78,14 @@ function nickServ(irc, client, buffer, text) {
   if (!cmd || cmd === 'help') {
     return notices(S, [
       'REGISTER <password> [email]  register this nick',
-      'IDENTIFY <password>          identify (alias /id)',
+      'IDENTIFY [nick] <password>   identify (alias /id)',
       'LOGOUT                       drop identification',
       'GHOST <nick> <password>      disconnect a stale session',
       'RECOVER <nick> <password>    ghost + take the nick',
+      'GROUP                        group this nick to your account',
+      'GROUP <nick> <password>      identify to nick, then group this nick',
+      'UNGROUP [nick]               remove a grouped nick',
+      'GLIST                        list nicks grouped to your account',
       'DROP <password>              unregister this nick',
       'INFO [nick]                  account info',
       'SET PASSWORD <new>           change password',
@@ -98,6 +102,7 @@ function nickServ(irc, client, buffer, text) {
     case 'id':
       return irc.exec(client, buffer, '/identify ' + rest);
     case 'logout':
+      irc.dropStatus(client);
       client.identified = false;
       client.account = null;
       client.oper = false;
@@ -118,9 +123,11 @@ function nickServ(irc, client, buffer, text) {
       const acc = state.getAccount(nick);
       if (!acc) return fail(S, `Nick ${nick} is not registered.`);
       const online = irc.findNick(nick);
+      const grouped = (acc.nicks && acc.nicks.length) ? acc.nicks.join(', ') : acc.nickname;
       const lines = [
         `${acc.nickname} is registered`,
         `Registered: ${new Date(acc.registeredAt).toISOString()}`,
+        `Grouped nicks: ${grouped}`,
         acc.email && client.oper ? `Email: ${acc.email}` : 'Email: (hidden)',
         acc.isOper ? 'Status: network operator' : 'Status: user',
         online ? `Online as ${online.nick}${online.identified ? ' (identified)' : ''}` : 'Currently offline'
@@ -171,6 +178,37 @@ function nickServ(irc, client, buffer, text) {
       }
       return fail(S, 'Syntax: AJOIN ADD|DEL|LIST [#channel]');
     }
+    case 'group': {
+      if (!client.identified || !client.account) {
+        if (args.length < 2) return needIdent(client, S);
+        const res = state.identifyNick(args[0], args.slice(1).join(' '));
+        if (!res.success) return fail(S, res.message);
+        irc.markIdentified(client, res.account);
+        irc.restoreAccess(client, { announce: true });
+      }
+      const g = state.groupNick(client.account, client.nick);
+      if (!g.success) return fail(S, g.message);
+      irc.restoreAccess(client, { announce: true });
+      return notices(S, [g.message]);
+    }
+    case 'ungroup': {
+      const err = needIdent(client, S);
+      if (err) return err;
+      const g = state.ungroupNick(client.account, args[0] || client.nick);
+      if (!g.success) return fail(S, g.message);
+      return notices(S, [g.message]);
+    }
+    case 'glist': {
+      const err = needIdent(client, S);
+      if (err) return err;
+      const who = args[0] || client.account;
+      const acc = state.getAccount(who);
+      if (!acc) return fail(S, 'No such account.');
+      const mine = lower(acc.nickname) === lower(client.account);
+      if (!mine && !client.oper) return fail(S, 'You can only GLIST your own nicks.');
+      const list = (acc.nicks && acc.nicks.length) ? acc.nicks : [acc.nickname];
+      return notices(S, [`Grouped nicks for ${acc.nickname}:`, ...list.map((n) => `  ${n}`)]);
+    }
     default:
       return fail(S, 'Unknown command. /ns help');
   }
@@ -220,7 +258,7 @@ function chanServ(irc, client, buffer, text) {
       ch.founder = lower(client.account);
       ch.flags[lower(client.account)] = 'F';
       ch.settings.desc = sanitize(desc, 120);
-      irc.applyAccess(client, chan);
+      irc.applyAccess(client, chan, { announce: true });
       state.onChange();
       return notices(S, [`${chan} is now registered to ${client.nick}. You are founder (~).`]);
     }
@@ -440,7 +478,7 @@ function chanServ(irc, client, buffer, text) {
       const { chan } = chanOf(args, buffer, 0);
       if (!chan) return fail(S, 'Syntax: SYNC [#channel]');
       if (irc.accessRank(client, chan) < RANK.O && !client.oper) return fail(S, 'Permission denied.');
-      for (const m of irc.members(chan)) irc.applyAccess(m, chan);
+      for (const m of irc.members(chan)) irc.applyAccess(m, chan, { announce: true });
       state.onChange();
       return notices(S, [`Synchronized access on ${chan}.`]);
     }

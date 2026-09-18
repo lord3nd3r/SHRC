@@ -168,11 +168,13 @@ New people are guests. You do not need an account to idle or speak, unless you t
 | `/nick alice` | Change nick. If `alice` is free and unregistered, it is yours for this session. |
 | `/nick alice` when alice is registered | Allowed. NickServ gives you **30 seconds** to `/identify`. Miss it and you are renamed to a Guest. |
 | `/register secret [email]` | Bind the current nick to NickServ. |
-| `/identify secret` | Identify as the current nick (`/id` works). |
+| `/identify [nick] secret` | Identify as the current nick, or as another nick (`/id` works). |
+| `/ns group` | Group this nick onto the account you are identified as. |
 | `/ns ghost alice secret` | Kill a stale session holding your nick, then take it. |
-| Reconnect with the same SSH key | Auto-identified as the nick that key is bound to. |
+| `ssh alice@host` with alice's bound key | Auto-identified as alice. |
+| `ssh frank@host` with alice's bound key | You are **frank**, not alice. Identify and `/ns group` later if you want. |
 
-The first time you `/identify` (or `/register`) over SSH, that key is written onto the account. You should see a notice that the key is bound. After that, reconnecting with the same key skips Guest and skips the 30-second window.
+The first time you `/identify` (or `/register`) over SSH, that key is written onto the account. You should see a notice that the key is bound. After that, reconnecting **as that nick** (or a grouped nick) with the same key skips Guest and skips the 30-second window. Connecting as a different username keeps that nick; the key does not override it.
 
 Web sessions use a throwaway `web:` fingerprint, so they always need `/identify`.
 
@@ -240,7 +242,7 @@ Live prefixes, highest first:
 
 On an **unregistered** channel, the first joiner is op. That op is live only; it does not survive an empty channel the way ChanServ flags do.
 
-On a **registered** channel, flags on the access list are restored when that person identifies (or SSH-key auto-identifies). `/op` and `/voice` from SOP/founder also write flags so they stick.
+On a **registered** channel, flags on the access list are restored when that person identifies (or SSH-key auto-identifies as that nick). `/op` and `/voice` from SOP/founder also write flags so they stick. Channel status (`~` `&` `@` `%` `+`) is never given to an unidentified nick.
 
 ```
 /op alice
@@ -263,8 +265,12 @@ All of these accept `/msg ServiceName COMMAND` as well as the short slash form. 
 
 ```
 /ns register <password> [email]
-/ns identify <password>          (also /identify, /id)
+/ns identify [nick] <password>   (also /identify, /id)
 /ns logout
+/ns group                        group this nick to your account
+/ns group <nick> <password>      identify to nick, then group this nick
+/ns ungroup [nick]
+/ns glist
 /ns ghost <nick> <password>
 /ns recover <nick> <password>
 /ns drop <password>
@@ -274,7 +280,7 @@ All of these accept `/msg ServiceName COMMAND` as well as the short slash form. 
 /ns ajoin add|del|list [#chan]
 ```
 
-AJOIN channels are joined automatically after identify.
+AJOIN channels are joined automatically after identify. `/ns group` attaches extra nicks to one account; you can do that later — connecting as another username does not group automatically.
 
 ### ChanServ — `/cs`
 
