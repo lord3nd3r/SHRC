@@ -176,13 +176,15 @@ your ssh key binds on identify — reconnect comes in already you
 
       initTerminalClient('xterm-container', 'close-terminal-btn');
 
-      fetch('/status')
-        .then((r) => r.text())
-        .then((html) => {
-          const el = document.getElementById('live-status-badge');
-          if (el) el.innerHTML = html;
-        })
-        .catch(() => {});
+      const statusEl = document.getElementById('live-status-badge');
+      const refreshStatus = () => {
+        fetch('/status', { cache: 'no-store' })
+          .then((r) => r.text())
+          .then((html) => { if (statusEl) statusEl.innerHTML = html; })
+          .catch(() => {});
+      };
+      refreshStatus();
+      setInterval(refreshStatus, 4000);
 
       document.querySelectorAll('[data-copy]').forEach((btn) => {
         btn.addEventListener('click', async () => {

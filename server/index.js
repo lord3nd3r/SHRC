@@ -47,14 +47,16 @@ app.get('/install.sh', (req, res) => {
 });
 
 app.get('/status', (req, res) => {
-  const activeCount = irc.clients.size;
+  res.setHeader('Cache-Control', 'no-store');
+  const activeCount = irc.humanCount();
   const rooms = irc.occupiedChannelCount();
   res.send(`<span class="live-dot"></span>${activeCount} online · ${rooms} channel${rooms === 1 ? '' : 's'}`);
 });
 
 app.get('/api/status', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   res.json({
-    online: irc.clients.size,
+    online: irc.humanCount(),
     totalConnections: state.stats.totalConnections,
     channels: irc.occupiedChannelCount()
   });
