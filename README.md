@@ -29,7 +29,7 @@ That starts:
 
 | Service | Default |
 |---|---|
-| HTTP + web terminal | http://localhost:3000 |
+| HTTPS web tty | https://HOST/ |
 | SSH | `ssh localhost -p 2222` |
 
 Override ports with `PORT` and `SSH_PORT`. Set `SHRC_OPER_PASSWORD` if you want a network-wide oper password that is not a NickServ password. Full SSH instructions for each OS are below and on `/connect`.
@@ -55,7 +55,7 @@ Inside the session: `/nick alice`, `/join #lounge`, `/help`. Ctrl+C or `/quit` d
 
 ### Web (any OS)
 
-Open `http://HOST:3000` (or the public site) and click **open the web client**. You land as `Guest######`. Web sessions do not bind an SSH key; `/identify` each time if you have a registered nick.
+Open `https://HOST/` and click **open the web client**. You land as `Guest######`. Web sessions do not bind an SSH key; `/identify` each time if the nick is registered.
 
 ### Linux
 

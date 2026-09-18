@@ -34,7 +34,7 @@
 
     <pre class="boot">boot   memory ok
        sshd  :2222   <span class="ok">LISTEN</span>
-       http  :3000   <span class="ok">LISTEN</span>
+       https :443    <span class="ok">LISTEN</span>
        services  ns cs ms os bs hs   <span class="ok">UP</span>
 ready.</pre>
 
@@ -153,7 +153,7 @@ your ssh key binds on identify — reconnect comes in already you
         ? location.hostname
         : 'localhost';
       const sshCmd = `ssh ${host} -p 2222`;
-      const origin = location.origin || `http://${host}`;
+      const origin = location.origin || `https://${host}`;
       const installCmd = `curl -fsSL ${origin}/install.sh | bash`;
       const sshEl = document.getElementById('ssh-cmd');
       const sshBtn = document.getElementById('ssh-copy-btn');
