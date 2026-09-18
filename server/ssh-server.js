@@ -5,27 +5,46 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { TUISession } from './tui-engine.js';
 
-const { Server } = ssh2;
+const { Server, utils } = ssh2;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const HOST_KEY_PATH = path.join(DATA_DIR, 'host_key');
 
+function generateHostKey() {
+  const { privateKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs1', format: 'pem' }
+  });
+  return privateKey;
+}
+
+function keyUsable(pem) {
+  try {
+    const parsed = utils.parseKey(pem);
+    return parsed && !(parsed instanceof Error);
+  } catch {
+    return false;
+  }
+}
+
 function getHostKey() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 
-  if (!fs.existsSync(HOST_KEY_PATH)) {
-    console.log('[SSH Server] Generating new SSH host key...');
-    const { privateKey } = crypto.generateKeyPairSync('ed25519', {
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-    });
-    fs.writeFileSync(HOST_KEY_PATH, privateKey, 'utf-8');
+  let pem = fs.existsSync(HOST_KEY_PATH)
+    ? fs.readFileSync(HOST_KEY_PATH, 'utf-8')
+    : '';
+
+  if (!keyUsable(pem)) {
+    console.log('[SSH Server] Generating new SSH host key (RSA 2048)...');
+    pem = generateHostKey();
+    fs.writeFileSync(HOST_KEY_PATH, pem, 'utf-8');
   }
 
-  return fs.readFileSync(HOST_KEY_PATH, 'utf-8');
+  return pem;
 }
 
 function computeFingerprint(pubKeyBuffer) {
