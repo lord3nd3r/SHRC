@@ -1,7 +1,7 @@
 {
   "name": "shrc",
   "version": "1.0.0",
-  "description": "Anonymous IRC over SSH",
+  "description": "SSH clubhouse",
   "main": "server/index.js",
   "type": "module",
   "scripts": {

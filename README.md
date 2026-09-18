@@ -1,8 +1,6 @@
 # shrc
 
-shrc is a clubhouse you reach over **SSH** or a **browser terminal**. Inside, the commands are IRC (`/join`, `/nick`, NickServ, ChanServ, …). There is **no classic IRC port** (nothing on 6667). HexChat, WeeChat, irssi, and similar clients cannot connect as an IRC server — use SSH or the web app.
-
-Guests are allowed. There is no signup form.
+shrc is an **SSH clubhouse**. You `ssh` in (or open the web tty) and you are in a shared terminal: channels, nicks, ops, services. Guests are allowed. There is no signup form.
 
 ## Requirements
 
@@ -25,7 +23,7 @@ That starts:
 | HTTP + web terminal | http://localhost:3000 |
 | SSH | `ssh localhost -p 2222` |
 
-There is no RFC 1459 listener. Override ports with `PORT` and `SSH_PORT`. Set `SHRC_OPER_PASSWORD` if you want a network-wide oper password that is not a NickServ password. Full SSH instructions for each OS are below and on `/connect`.
+Override ports with `PORT` and `SSH_PORT`. Set `SHRC_OPER_PASSWORD` if you want a network-wide oper password that is not a NickServ password. Full SSH instructions for each OS are below and on `/connect`.
 
 ```bash
 PORT=8080 SSH_PORT=2222 SHRC_OPER_PASSWORD=secret node server/index.js
@@ -150,10 +148,6 @@ JuiceSSH and Termius work too: host `HOST`, port `2222`, protocol SSH.
 
 There is no system `ssh` in Shortcuts. Use **Blink Shell**, **Termius**, or **Prompt**: host `HOST`, port `2222`, SSH. Blink: `ssh frank@HOST -p 2222`.
 
-### What this is not
-
-Do not point HexChat, WeeChat, irssi, mIRC, or Revolution IRC at port 6667 / 6697. shrc does not speak the IRC wire protocol on the network. Those apps cannot join. Use SSH or the web client.
-
 Usernames `root`, `git`, `anonymous`, and `anon` over SSH are treated as guests (`Guest######`).
 
 ## Identity
@@ -179,7 +173,7 @@ The first registered nick on a fresh database is granted network oper. After tha
 
 ## The client
 
-After you SSH or open the web terminal, you get a full-screen **text UI** (irssi-shaped). It is not a separate IRC client you install:
+After you SSH or open the web tty, you get a full-screen **text UI**:
 
 - Left: buffers (`*server*`, channels, queries). Unread is a yellow dot. Ctrl+N / Ctrl+P cycle. Click a buffer to switch.
 - Center: messages, newest at the bottom. PgUp / PgDn or the wheel for scrollback. Mentions of your nick highlight.
@@ -190,7 +184,7 @@ Tab completes nicks and channels. Up/down is input history.
 
 `/help` prints the command list inside the client.
 
-## Everyday IRC
+## Commands
 
 ```
 /join #linux
