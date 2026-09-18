@@ -193,6 +193,8 @@ function chanServ(irc, client, buffer, text) {
       'LIST                            registered channels',
       'FLAGS [#chan] [nick +FOAHV]     set access flags',
       '  F founder  A admin/protect  O op  H halfop  V voice',
+      'ACCESS ADD <nick> <level>       5=voice 10=hop 50=op 100=sop',
+      'ACCESS DEL <nick>  |  ACCESS LIST',
       'SOP|AOP|HOP|VOP ADD|DEL|LIST [nick]',
       'OP|DEOP|VOICE|DEVOICE|HALFOP [#chan] [nick]',
       'AKICK ADD|DEL|LIST [#chan] [mask] [reason]',
@@ -259,6 +261,47 @@ function chanServ(irc, client, buffer, text) {
         .filter((c) => c.registered)
         .map((c) => `${c.name}  founder ${c.founder}  ${c.settings?.desc || ''}`);
       return notices(S, rows.length ? rows : ['No registered channels.']);
+    }
+    case 'access': {
+      const err = needIdent(client, S);
+      if (err) return err;
+      const { chan, resti } = chanOf(args, buffer, 0);
+      if (!chan) return fail(S, 'Syntax: ACCESS ADD <nick> <level>  |  ACCESS DEL <nick>  |  ACCESS LIST');
+      const ch = state.ensureChannel(chan);
+      if (!ch.registered) return fail(S, `${chan} is not registered. /cs register first.`);
+      const sub = lower(args[resti] || args[0]);
+      const nick = args[resti + 1] || args[1];
+      const levelRaw = args[resti + 2] || args[2];
+      if (sub === 'list' || !sub) {
+        const rows = Object.entries(ch.flags || {}).map(([n, f]) => {
+          const lv = f.includes('F') ? 1000 : f.includes('A') ? 100 : f.includes('O') ? 50 : f.includes('H') ? 10 : f.includes('V') ? 5 : 0;
+          return `${n}  ${lv}  +${f}`;
+        });
+        return notices(S, rows.length ? [`ACCESS list for ${chan}:`, ...rows] : [`${chan} access list is empty.`]);
+      }
+      if (irc.accessRank(client, chan) < 40 && !client.oper) return fail(S, 'You need SOP/founder to edit access.');
+      if (sub === 'del' || sub === 'delete') {
+        if (!nick) return fail(S, 'Syntax: ACCESS DEL <nick>');
+        return irc.setFlags(client, chan, nick, '-FAOHV');
+      }
+      if (sub === 'add') {
+        if (!nick || levelRaw == null) return fail(S, 'Syntax: ACCESS ADD <nick> <level>   (5 voice, 10 hop, 50 op, 100 sop)');
+        const level = parseInt(levelRaw, 10);
+        if (!Number.isFinite(level) || level < 1) return fail(S, 'Level must be a positive number. 5=voice 10=hop 50=op 100=sop');
+        let spec = '-FAOHV+';
+        if (level >= 100) spec += 'A';
+        else if (level >= 50) spec += 'O';
+        else if (level >= 10) spec += 'H';
+        else spec += 'V';
+        const res = irc.setFlags(client, chan, nick, spec);
+        if (res.ok && !res.status?.includes('flags')) {
+          return notices(S, [`${nick} added to ${chan} access at level ${level}.`]);
+        }
+        return res.ok
+          ? notices(S, [`${nick} access on ${chan} set to level ${level} (${res.status}).`])
+          : res;
+      }
+      return fail(S, 'Syntax: ACCESS ADD <nick> <level>  |  ACCESS DEL <nick>  |  ACCESS LIST');
     }
     case 'flags': {
       const err = needIdent(client, S);
@@ -553,7 +596,7 @@ function botServ(irc, client, buffer, text) {
       'ACT <#chan> <text>               bot emote',
       'INFO [#chan]                     assignment + fantasy settings',
       'SET [#chan] FANTASY|DONTKICKOPS|DONTKICKVOICES|GREET ...',
-      'In channel: !op !deop !voice !kick !ban !topic  (if FANTASY is on)'
+      'In channel: .op .kick .voice .access add nick 5  (if FANTASY is on)'
     ]);
   }
 

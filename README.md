@@ -362,12 +362,15 @@ Greet accepts `%n` (nick) and `%c` (channel).
 Fantasy (in-channel, if FANTASY is on) uses **your** ChanServ access, not the bot’s:
 
 ```
-!op nick    !deop nick
-!voice nick !devoice nick
-!hop nick
-!kick nick [reason]
-!ban nick   !unban nick
-!topic text
+.op nick    .deop nick
+.voice nick .devoice nick
+.hop nick
+.kick nick [reason]
+.ban nick   .unban nick
+.topic text
+.access add nick 5     (5=voice 10=hop 50=op 100=sop)
+.access del nick
+.access list
 ```
 
 `DONTKICKOPS` (default on) stops the bot kicking ops.

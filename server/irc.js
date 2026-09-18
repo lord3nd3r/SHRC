@@ -731,6 +731,18 @@ export class IrcNetwork {
         if (!need(30)) return;
         this.topic(client, channel, parsed.rest);
         return;
+      case 'access': {
+        if (!need(40)) return;
+        const sub = (args[0] || '').toLowerCase();
+        const res = handleService(this, client, channel, 'ChanServ',
+          sub ? `ACCESS ${channel} ${parsed.rest}` : `ACCESS ${channel} LIST`);
+        for (const line of res.lines || []) {
+          asBotNotice(line.text);
+        }
+        if (res.error) asBotNotice(res.error);
+        else if (res.status) asBotNotice(res.status);
+        return;
+      }
       case 'assign':
       case 'unassign':
         asBotNotice('Use /bs ASSIGN or /bs UNASSIGN.');
@@ -984,7 +996,7 @@ export class IrcNetwork {
       type,
       extra: { prefix: this.prefix(client, channel) }
     });
-    if (type === 'privmsg' && body.startsWith('!')) this.handleFantasy(client, channel, body);
+    if (type === 'privmsg' && /^\.[A-Za-z]/.test(body)) this.handleFantasy(client, channel, body);
     return ok();
   }
 
@@ -1332,7 +1344,7 @@ export class IrcNetwork {
           '/ms /memoserv         SEND LIST READ DEL',
           '/os /operserv         KILL AKILL GLOBAL MODE OPER (opers)',
           '/bs /botserv          ASSIGN UNASSIGN SAY ACT SET FANTASY',
-          '                      in-channel: !op !kick !voice !topic',
+          '                      in-channel: .op .kick .access add nick 5',
           '/hs /hostserv         REQUEST ON OFF SET (vhosts)',
           '/msg NickServ IDENTIFY <pass>',
           'SSH key auto-identifies a nick registered with that key.',
