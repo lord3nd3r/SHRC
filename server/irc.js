@@ -813,6 +813,7 @@ export class IrcNetwork {
       const greet = String(ch.botserv.greet).replace(/%n/g, client.nick).replace(/%c/g, channel);
       this.botSpeak(channel, greet);
     }
+    this.rememberChannel(client, channel, true);
     return ok({
       switchBuffer: channel,
       status: `Joined ${channel}`,
@@ -820,10 +821,39 @@ export class IrcNetwork {
     });
   }
 
+  rememberChannel(client, channel, joined) {
+    if (!client || client.isBot || !client.identified) return;
+    const acc = state.getAccount(client.account);
+    if (!acc) return;
+    if (!acc.ajoin) acc.ajoin = [];
+    const ch = normalizeChannel(channel);
+    if (!ch.startsWith('#') || ch === '*server*') return;
+    if (joined) {
+      if (!acc.ajoin.includes(ch)) acc.ajoin.push(ch);
+    } else {
+      acc.ajoin = acc.ajoin.filter((c) => c !== ch);
+    }
+    state.scheduleSave();
+  }
+
+  autoJoinChannels(client) {
+    const acc = client.identified ? state.getAccount(client.account) : null;
+    const list = (acc?.ajoin && acc.ajoin.length) ? [...acc.ajoin] : ['#lounge'];
+    const results = [];
+    for (const ch of list) {
+      if (!client.channels.has(normalizeChannel(ch))) {
+        results.push(this.join(client, ch));
+      }
+    }
+    if (!client.channels.size) results.push(this.join(client, '#lounge'));
+    return results;
+  }
+
   _part(client, channel, reason, kind = 'part') {
     const key = normalizeChannel(channel);
     if (!client.channels.has(key)) return;
     client.channels.delete(key);
+    if (kind === 'part') this.rememberChannel(client, key, false);
     const text = kind === 'quit'
       ? `${client.nick} has quit (${sanitize(reason, 80) || 'Quit'})`
       : `${client.nick} has left ${key} (${sanitize(reason, 80) || 'Part'})`;
@@ -991,6 +1021,7 @@ export class IrcNetwork {
     });
     this.opsLog(`${client.nick} kicked ${target.nick} from ${key} (${why})`);
     target.channels.delete(key);
+    this.rememberChannel(target, key, false);
     state.onChange();
     return ok({ status: `Kicked ${target.nick} from ${key}` });
   }
@@ -1575,12 +1606,15 @@ export class IrcNetwork {
             extra.push('This identity is now bound to your nick. Reconnect will auto-identify.');
           }
           this.loadAccountPrefs(client);
-          for (const ch of [...client.channels]) this.applyAccess(client, ch);
+          for (const ch of [...client.channels]) {
+            this.applyAccess(client, ch);
+            this.rememberChannel(client, ch, true);
+          }
           const ajoin = res.account.ajoin || [];
           for (const ch of ajoin) {
-            if (!client.channels.has(ch)) {
+            if (!client.channels.has(normalizeChannel(ch))) {
               const jr = this.join(client, ch);
-              if (jr.ok && jr.switchBuffer) extra.push(`Autojoined ${ch}`);
+              if (jr.ok) extra.push(`Autojoined ${ch}`);
             }
           }
           const memos = state.getMemos(client.account).filter((m) => m.unread);

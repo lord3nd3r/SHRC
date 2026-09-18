@@ -139,13 +139,7 @@ export class TUISession {
     }
     this.addLocal('*server*', { type: 'server', author: 'shrc', text: `you are ${this.client.nick}  fp ${this.client.fingerprint}`, timestamp: Date.now() });
 
-    this.applyResult(irc.join(this.client, '#lounge'));
-    if (this.client.identified) {
-      const acc = state.getAccount(this.client.account);
-      for (const ch of acc?.ajoin || []) {
-        if (ch !== '#lounge') this.applyResult(irc.join(this.client, ch));
-      }
-    }
+    for (const res of irc.autoJoinChannels(this.client)) this.applyResult(res);
     if (joined.nickserv && joined.nickserv.length) this.deliverNotices(joined.nickserv);
 
     this.unsubscribeState = state.subscribe(() => {
