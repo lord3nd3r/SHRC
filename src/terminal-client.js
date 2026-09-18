@@ -140,22 +140,29 @@ export function initTerminalClient(containerId, closeBtnId) {
 
   function wireCopyPaste(t) {
     t.attachCustomKeyEventHandler((ev) => {
+      if (ev.type !== 'keydown') return true;
       const c = ev.ctrlKey || ev.metaKey;
-      if (c && ev.shiftKey && (ev.key === 'C' || ev.key === 'c')) {
-        if (ev.type === 'keydown') copySelection();
-        return false;
-      }
-      if (c && ev.shiftKey && (ev.key === 'V' || ev.key === 'v')) {
-        if (ev.type === 'keydown') {
-          navigator.clipboard.readText().then((text) => t.paste(text)).catch(() => {});
+      const key = ev.key;
+      if (c && (key === 'c' || key === 'C')) {
+        if (t.getSelection()) {
+          copySelection();
+          return false;
         }
+        return true;
+      }
+      if (c && (key === 'v' || key === 'V')) {
+        navigator.clipboard.readText().then((text) => {
+          if (text) t.paste(text);
+        }).catch(() => {});
         return false;
       }
       return true;
     });
-    t.onSelectionChange(() => {
-      const sel = t.getSelection();
-      if (sel && sel.length) copySelection();
+    t.element.addEventListener('paste', (ev) => {
+      const text = ev.clipboardData?.getData('text');
+      if (!text) return;
+      ev.preventDefault();
+      t.paste(text);
     });
     let down = null;
     t.element.addEventListener('mousedown', (ev) => {
@@ -166,8 +173,12 @@ export function initTerminalClient(containerId, closeBtnId) {
       if (!down || ev.button !== 0) return;
       const dist = Math.hypot(ev.clientX - down.x, ev.clientY - down.y);
       down = null;
+      const sel = t.getSelection() || '';
+      if (sel.length) {
+        copySelection();
+        return;
+      }
       if (dist > 4) return;
-      if (t.getSelection()) return;
       const screen = t.element.querySelector('.xterm-screen') || t.element;
       const rect = screen.getBoundingClientRect();
       if (!rect.width || !rect.height) return;

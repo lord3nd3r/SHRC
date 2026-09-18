@@ -111,7 +111,7 @@ export class TUISession {
     this.banned = false;
     this.hour12 = !!userKey.hour12;
     this.beepOn = !!userKey.beep;
-    this.useMouse = userKey.noMouse !== true;
+    this.useMouse = userKey.mouse === true;
 
     const joined = irc.connect({
       id: this.sessionId,
@@ -287,8 +287,10 @@ export class TUISession {
     }
     if (handledMouse) return;
 
-    if (raw === '\x03' || raw === '\x04') {
-      this.quit('Quit');
+    if (raw === '\x03') {
+      this.chatInput = '';
+      this.statusMessage = ANSI.gray + 'cleared. /quit or /exit to leave.' + ANSI.reset;
+      this.render();
       return;
     }
 
@@ -393,8 +395,24 @@ export class TUISession {
       this.chatInput = '';
       this.historyIdx = -1;
       if (!input.trim()) { this.render(); return; }
-      if (input.trim() === 'qq') {
-        this.quit('Quit');
+      const low = input.trim().toLowerCase();
+      if (low === 'qq' || low === '/quit' || low === '/exit' || low.startsWith('/quit ') || low.startsWith('/exit ')) {
+        const reason = input.trim().replace(/^\/?(quit|exit)\s*/i, '') || 'Quit';
+        this.quit(reason);
+        return;
+      }
+      if (low === '/set mouse on') {
+        this.useMouse = true;
+        this.write(ANSI.enableMouse);
+        this.statusMessage = ANSI.brightGreen + 'Mouse on. Shift-drag to copy.' + ANSI.reset;
+        this.render();
+        return;
+      }
+      if (low === '/set mouse off') {
+        this.useMouse = false;
+        this.write(ANSI.disableMouse);
+        this.statusMessage = ANSI.brightGreen + 'Mouse off. Drag-select copies in your terminal.' + ANSI.reset;
+        this.render();
         return;
       }
       this.inputHistory.push(input);
@@ -589,9 +607,7 @@ export class TUISession {
     const chanTag = displayBufferName(buf, nick);
     const opMark = c && buf && buf.startsWith('#') ? (irc.prefix(c, buf) || '') : '';
     lines.push(ANSI.bold + ANSI.green + `[${opMark}${chanTag}]` + ANSI.reset + ' ' + shownInput + ANSI.brightGreen + '▋' + ANSI.reset);
-    lines.push(ANSI.gray + (this.useMouse
-      ? ' shift-drag copy · ^C quit · ^K color · ^B bold · /help'
-      : ' drag copy · ^C quit · ^K color · ^B bold · /help') + ANSI.reset);
+    lines.push(ANSI.gray + '/quit /exit · drag-select copy · ^C clear · ^K color · /help' + ANSI.reset);
 
     let out = ANSI.hideCursor + ANSI.moveTo(1, 1);
     lines.slice(0, this.rows).forEach((line, i) => {

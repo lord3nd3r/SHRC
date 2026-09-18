@@ -14,7 +14,7 @@ function defaultMotd() {
     'else /nick then /identify (30 seconds) or you get renamed.',
     'services: /ns /cs /ms /os /bs /hs   /watch  /ignore',
     '/cs register  to keep founder/op/voice across reconnects.',
-    '/help for the rest.  /quit or Ctrl+C to leave.'
+    '/help for the rest.  /quit or /exit to leave.'
   ];
 }
 
