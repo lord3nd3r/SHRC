@@ -131,6 +131,7 @@ wss.on('connection', (ws, req) => {
       webUser.hour12 = !!msg.hour12;
       webUser.beep = !!msg.beep;
       virtualStream.beep = () => send(ws, { op: 'hl' });
+      webUser.noMouse = true;
       session = new TUISession(virtualStream, webUser);
       session.handleResize(virtualStream.columns, virtualStream.rows);
     } else if (msg.op === 'in') {

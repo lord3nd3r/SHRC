@@ -111,6 +111,7 @@ export class TUISession {
     this.banned = false;
     this.hour12 = !!userKey.hour12;
     this.beepOn = !!userKey.beep;
+    this.useMouse = userKey.noMouse !== true;
 
     const joined = irc.connect({
       id: this.sessionId,
@@ -124,7 +125,7 @@ export class TUISession {
       this.banned = true;
       this.client = null;
       this.activeBuffer = '*server*';
-      this.write(ANSI.enableMouse + ANSI.clear);
+      this.write((this.useMouse ? ANSI.enableMouse : '') + ANSI.clear);
       this.write(ANSI.red + `\r\n  banned from shrc (${joined.ban.reason})\r\n` + ANSI.reset);
       this.forceQuit('banned: ' + joined.ban.reason);
       return;
@@ -146,7 +147,7 @@ export class TUISession {
       if (this.alive) this.onStateChange();
     });
 
-    this.write(ANSI.enableMouse + ANSI.clear);
+    this.write((this.useMouse ? ANSI.enableMouse : '') + ANSI.clear);
     this.render();
   }
 
@@ -588,7 +589,9 @@ export class TUISession {
     const chanTag = displayBufferName(buf, nick);
     const opMark = c && buf && buf.startsWith('#') ? (irc.prefix(c, buf) || '') : '';
     lines.push(ANSI.bold + ANSI.green + `[${opMark}${chanTag}]` + ANSI.reset + ' ' + shownInput + ANSI.brightGreen + '▋' + ANSI.reset);
-    lines.push(ANSI.gray + ' ^C quit · ^K color · ^B bold · ^U uline · ^O reset · /help' + ANSI.reset);
+    lines.push(ANSI.gray + (this.useMouse
+      ? ' shift-drag copy · ^C quit · ^K color · ^B bold · /help'
+      : ' drag copy · ^C quit · ^K color · ^B bold · /help') + ANSI.reset);
 
     let out = ANSI.hideCursor + ANSI.moveTo(1, 1);
     lines.slice(0, this.rows).forEach((line, i) => {

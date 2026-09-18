@@ -119,6 +119,64 @@ export function initTerminalClient(containerId, closeBtnId) {
     return { cols: term?.cols || 90, rows: term?.rows || 30 };
   }
 
+  function copySelection() {
+    const sel = term?.getSelection?.() || '';
+    if (!sel) return false;
+    try {
+      navigator.clipboard.writeText(sel);
+      return true;
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = sel;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        return true;
+      } catch { return false; }
+    }
+  }
+
+  function wireCopyPaste(t) {
+    t.attachCustomKeyEventHandler((ev) => {
+      const c = ev.ctrlKey || ev.metaKey;
+      if (c && ev.shiftKey && (ev.key === 'C' || ev.key === 'c')) {
+        if (ev.type === 'keydown') copySelection();
+        return false;
+      }
+      if (c && ev.shiftKey && (ev.key === 'V' || ev.key === 'v')) {
+        if (ev.type === 'keydown') {
+          navigator.clipboard.readText().then((text) => t.paste(text)).catch(() => {});
+        }
+        return false;
+      }
+      return true;
+    });
+    t.onSelectionChange(() => {
+      const sel = t.getSelection();
+      if (sel && sel.length) copySelection();
+    });
+    let down = null;
+    t.element.addEventListener('mousedown', (ev) => {
+      if (ev.button !== 0) return;
+      down = { x: ev.clientX, y: ev.clientY };
+    });
+    t.element.addEventListener('mouseup', (ev) => {
+      if (!down || ev.button !== 0) return;
+      const dist = Math.hypot(ev.clientX - down.x, ev.clientY - down.y);
+      down = null;
+      if (dist > 4) return;
+      if (t.getSelection()) return;
+      const screen = t.element.querySelector('.xterm-screen') || t.element;
+      const rect = screen.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const col = Math.max(1, Math.min(t.cols, Math.floor((ev.clientX - rect.left) / (rect.width / t.cols)) + 1));
+      const row = Math.max(1, Math.min(t.rows, Math.floor((ev.clientY - rect.top) / (rect.height / t.rows)) + 1));
+      send({ op: 'in', data: `\x1b[<0;${col};${row}M\x1b[<0;${col};${row}m` });
+    });
+  }
+
   function send(obj) {
     if (socket && socket.readyState === 1) socket.send(JSON.stringify(obj));
   }
@@ -223,6 +281,7 @@ export function initTerminalClient(containerId, closeBtnId) {
       }
       term.open(container);
       term.onData((data) => send({ op: 'in', data }));
+      wireCopyPaste(term);
       window.addEventListener('resize', () => {
         if (!modal?.classList.contains('open')) return;
         emitSize();
@@ -271,6 +330,14 @@ export function initTerminalClient(containerId, closeBtnId) {
     try { socket?.close(); } catch {}
   }
 
+  document.getElementById('copy-terminal-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const ok = copySelection();
+    const btn = e.currentTarget;
+    const prev = btn.textContent;
+    btn.textContent = ok ? 'copied' : 'select first';
+    setTimeout(() => { btn.textContent = prev; }, 1200);
+  });
   if (closeBtn) closeBtn.addEventListener('click', closeModal);
   if (maxBtn) {
     maxBtn.addEventListener('click', (e) => {

@@ -1576,6 +1576,9 @@ export class IrcNetwork {
           client.beep = !/^(off|0|false|no)$/i.test(val || 'on');
           return ok({ status: `Mention beep ${client.beep ? 'on' : 'off'}.` });
         }
+        if (what === 'mouse') {
+          return ok({ status: 'Mouse tracking is on for SSH (shift-drag to copy). Web tty uses drag-select.' });
+        }
         return fail('Usage: /set clock 12|24   /set beep on|off');
       }
 
