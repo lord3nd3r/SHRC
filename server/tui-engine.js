@@ -45,9 +45,15 @@ function padLeft(str, n) {
   return s.length >= n ? s.slice(0, n) : ' '.repeat(n - s.length) + s;
 }
 
-function hhmm(ts) {
+function hhmm(ts, hour12) {
   const d = new Date(ts || Date.now());
-  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  if (hour12) {
+    let h = d.getHours() % 12;
+    if (h === 0) h = 12;
+    return String(h).padStart(2, ' ') + ':' + min;
+  }
+  return String(d.getHours()).padStart(2, '0') + ':' + min;
 }
 
 function wrapText(text, width) {
@@ -103,6 +109,8 @@ export class TUISession {
     this.hitTargets = [];
     this.alive = true;
     this.banned = false;
+    this.hour12 = !!userKey.hour12;
+    this.beepOn = !!userKey.beep;
 
     const joined = irc.connect({
       id: this.sessionId,
@@ -189,6 +197,10 @@ export class TUISession {
     if (res.error) this.statusMessage = ANSI.brightRed + res.error + ANSI.reset;
     else if (res.status) this.statusMessage = ANSI.brightGreen + res.status + ANSI.reset;
     if (res.quit) this.quit(res.reason);
+    if (this.client) {
+      if (typeof this.client.hour12 === 'boolean') this.hour12 = this.client.hour12;
+      if (typeof this.client.beep === 'boolean') this.beepOn = this.client.beep;
+    }
   }
 
   onStateChange() {
@@ -198,6 +210,13 @@ export class TUISession {
         const prev = this.lastCount.get(b) || n;
         if (n > prev && b !== this.activeBuffer) {
           this.unread.set(b, (this.unread.get(b) || 0) + (n - prev));
+        }
+        if (n > prev && this.beepOn) {
+          const msgs = (state.chat[b] || []).slice(prev);
+          const me = (this.clientNick() || '').toLowerCase();
+          if (me && msgs.some((m) => String(m.text || '').toLowerCase().includes(me))) {
+            if (typeof this.stream.beep === 'function') this.stream.beep();
+          }
         }
         this.lastCount.set(b, n);
       }
@@ -415,7 +434,7 @@ export class TUISession {
     const myL = my.toLowerCase();
     const lines = [];
     for (const m of this.mergedMessages(buffer)) {
-      const time = ANSI.gray + hhmm(m.timestamp) + ANSI.reset;
+      const time = ANSI.gray + hhmm(m.timestamp, this.hour12) + ANSI.reset;
       const type = m.type || 'privmsg';
       if (type === 'join' || type === 'part' || type === 'quit' || type === 'nick' || type === 'mode' || type === 'kick' || type === 'topic' || type === 'server') {
         const color = type === 'kick' ? ANSI.red : type === 'topic' || type === 'mode' ? ANSI.yellow : ANSI.gray;
@@ -568,7 +587,7 @@ export class TUISession {
     const topic = ch ? (ch.topic || 'no topic') : (buf && String(buf).startsWith('query:') ? 'query' : 'server');
     const topicLine = this.statusMessage
       ? ' ' + this.statusMessage
-      : ANSI.gray + ` [${hhmm(Date.now())}] ${modeStr} ${nNicks ? nNicks + ' nicks' : ''} │ ${topic}` + ANSI.reset;
+      : ANSI.gray + ` [${hhmm(Date.now(), this.hour12)}] ${modeStr} ${nNicks ? nNicks + ' nicks' : ''} │ ${topic}` + ANSI.reset;
     lines.push(topicLine.slice(0, this.cols + 32));
 
     const shownInput = mircToAnsi(maskInput(this.chatInput));

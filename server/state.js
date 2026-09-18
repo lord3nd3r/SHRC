@@ -7,6 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
+const SQLITE_FILE = path.join(DATA_DIR, 'shrc.sqlite');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -141,17 +142,40 @@ class StateStore {
       totalConnections: 0,
       activeUsers: 0
     };
+    this.settings = this.settings || {
+      ircEnabled: true,
+      motd: [],
+      hour12: false
+    };
+    this.webNicks = {};
 
     this.listeners = new Set();
     this._saveTimer = null;
+    this._sqlDb = null;
+    this._sqlFlush = null;
     this.load();
   }
 
-  load() {
-    if (!fs.existsSync(DB_FILE)) return;
+  attachSql(db, flush) {
+    this._sqlDb = db;
+    this._sqlFlush = flush;
+    db.run('CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)');
+    const row = db.exec('SELECT v FROM kv WHERE k = \'snapshot\'');
+    if (row.length && row[0].values.length) {
+      try {
+        const data = JSON.parse(row[0].values[0][0]);
+        this.applySnapshot(data);
+        console.log('[StateStore] Loaded persistent state from shrc.sqlite');
+        return;
+      } catch (err) {
+        console.error('[StateStore] sqlite snapshot corrupt:', err.message);
+      }
+    }
+  }
+
+  applySnapshot(data) {
+    if (!data || typeof data !== 'object') return;
     try {
-      const raw = fs.readFileSync(DB_FILE, 'utf-8');
-      const data = JSON.parse(raw);
       if (data.chat) this.chat = data.chat;
       if (data.accounts) this.accounts = data.accounts;
       if (data.serverBans) this.serverBans = data.serverBans;
@@ -172,10 +196,15 @@ class StateStore {
         }
       }
 
+      if (data.settings) this.settings = { motd: [], hour12: false, ...this.settings, ...data.settings };
+      if (data.webNicks) this.webNicks = data.webNicks;
+
       for (const acc of Object.values(this.accounts)) {
         const n = String(acc.nickname || '').toLowerCase();
         if (n === 'late_architect' || n === 'end3r') acc.isOper = true;
         if (!acc.ajoin) acc.ajoin = [];
+        if (!acc.ignores) acc.ignores = [];
+        if (!acc.watch) acc.watch = [];
       }
       for (const ch of Object.values(this.channels)) normalizeChanRecord(ch);
       const lounge = this.channels['#lounge'];
@@ -189,31 +218,62 @@ class StateStore {
         if (!lounge.botserv) lounge.botserv = { bot: '', fantasy: true, greet: '', dontkickops: true, dontkickvoices: false };
         if (!lounge.botserv.bot) lounge.botserv.bot = 'HelpBot';
       }
+      this.ensureChannel('#ops');
+      const ops = this.channels['#ops'];
+      ops.registered = true;
+      ops.modes.n = true;
+      ops.modes.t = true;
+      ops.topic = ops.topic || 'kicks, akills, ops — paper trail';
+    } catch (err) {
+      console.error('[StateStore] Error applying snapshot:', err.message);
+    }
+  }
 
-      console.log('[StateStore] Loaded persistent state from db.json');
+  load() {
+    if (fs.existsSync(SQLITE_FILE)) return;
+    if (!fs.existsSync(DB_FILE)) {
+      this.ensureChannel('#ops');
+      return;
+    }
+    try {
+      const raw = fs.readFileSync(DB_FILE, 'utf-8');
+      this.applySnapshot(JSON.parse(raw));
+      console.log('[StateStore] Loaded persistent state from db.json (will migrate to sqlite)');
     } catch (err) {
       console.error('[StateStore] Error loading db.json:', err.message);
     }
 
     if (!this.channels['#lounge']) this.channels['#lounge'] = defaultChannel('#lounge', 'cozy lounge — idle, coffee, hellos');
+    this.ensureChannel('#ops');
+  }
+
+  snapshot() {
+    return {
+      chat: this.chat,
+      accounts: this.accounts,
+      channels: this.channels,
+      serverBans: this.serverBans,
+      memos: this.memos,
+      bots: this.bots,
+      stats: this.stats,
+      settings: this.settings,
+      webNicks: this.webNicks
+    };
   }
 
   save() {
     try {
-      const data = {
-        chat: this.chat,
-        accounts: this.accounts,
-        channels: this.channels,
-        serverBans: this.serverBans,
-        memos: this.memos,
-        bots: this.bots,
-        stats: this.stats
-      };
+      const json = JSON.stringify(this.snapshot());
+      if (this._sqlDb && this._sqlFlush) {
+        this._sqlDb.run('INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)', ['snapshot', json]);
+        this._sqlFlush();
+        return;
+      }
       const tmp = DB_FILE + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+      fs.writeFileSync(tmp, JSON.stringify(this.snapshot(), null, 2));
       fs.renameSync(tmp, DB_FILE);
     } catch (err) {
-      console.error('[StateStore] Error saving db.json:', err.message);
+      console.error('[StateStore] Error saving:', err.message);
     }
   }
 
@@ -284,6 +344,8 @@ class StateStore {
       registeredAt: Date.now(),
       isOper: !anyOper,
       ajoin: [],
+      ignores: [],
+      watch: [],
       lastSeen: Date.now()
     };
     this.onChange();
@@ -305,6 +367,8 @@ class StateStore {
     }
     account.lastSeen = Date.now();
     if (!account.ajoin) account.ajoin = [];
+    if (!account.ignores) account.ignores = [];
+    if (!account.watch) account.watch = [];
     this.scheduleSave();
     return {
       success: true,
@@ -404,3 +468,22 @@ export function isValidNick(nick) {
 }
 
 export const state = new StateStore();
+
+try {
+  const initSqlJs = (await import('sql.js')).default;
+  const wasmFile = path.join(__dirname, '..', 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+  const wasmBinary = fs.readFileSync(wasmFile);
+  const SQL = await initSqlJs({ wasmBinary });
+  const existed = fs.existsSync(SQLITE_FILE);
+  const db = existed
+    ? new SQL.Database(new Uint8Array(fs.readFileSync(SQLITE_FILE)))
+    : new SQL.Database();
+  state.attachSql(db, () => {
+    const tmp = SQLITE_FILE + '.tmp';
+    fs.writeFileSync(tmp, Buffer.from(db.export()));
+    fs.renameSync(tmp, SQLITE_FILE);
+  });
+  if (!existed) state.save();
+} catch (err) {
+  console.error('[StateStore] sqlite unavailable, using json:', err.message);
+}

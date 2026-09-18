@@ -393,9 +393,9 @@ Vhosts look like hostnames: `alice.users.shrc`.
 
 ## Persistence
 
-State lives in `data/db.json` (chat, accounts, channels, flags, memos, bots, bans). The SSH **host** private key is `data/host_key` (generated on first run as ed25519). Neither file is in git.
+State lives in `data/shrc.sqlite` (migrated from `db.json` on first start). The SSH **host** private key is `data/host_key`. Neither is in git.
 
-Writes are debounced and replaced atomically (`db.json.tmp` → `db.json`).
+Writes are debounced and replaced atomically.
 
 Chat is capped per room. The artboard and profile directory from earlier experiments are gone.
 

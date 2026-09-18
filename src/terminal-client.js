@@ -77,10 +77,39 @@ export function initTerminalClient(containerId, closeBtnId) {
   let reconnectTimer = null;
   let reconnects = 0;
 
+  function clientPrefs() {
+    let clientId = '';
+    try {
+      clientId = localStorage.getItem('shrc-web-id') || '';
+      if (!/^[0-9a-f]{16,}$/i.test(clientId)) {
+        const bytes = new Uint8Array(16);
+        (window.crypto || crypto).getRandomValues(bytes);
+        clientId = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+        localStorage.setItem('shrc-web-id', clientId);
+      }
+    } catch {
+      clientId = Math.random().toString(16).slice(2).padEnd(16, '0');
+    }
+    let hour12 = false;
+    let beep = false;
+    let font = 13;
+    try {
+      hour12 = localStorage.getItem('shrc-clock') === '12';
+      beep = localStorage.getItem('shrc-beep') === '1';
+      font = Math.min(22, Math.max(11, parseInt(localStorage.getItem('shrc-font') || '13', 10)));
+    } catch {}
+    if (term) {
+      term.options.fontSize = font;
+      try { fitAddon?.fit(); } catch {}
+    }
+    return { clientId, hour12, beep };
+  }
+
   function applyTheme() {
     if (!term) return;
     const id = document.body.dataset.theme || 'phosphor';
     term.options.theme = XTERM_THEMES[id] || XTERM_THEMES.phosphor;
+    clientPrefs();
   }
 
   function size() {
@@ -129,7 +158,7 @@ export function initTerminalClient(containerId, closeBtnId) {
       started = false;
       ensureSession();
       whenOpen(() => {
-        send({ op: 'start', ...size() });
+        send({ op: 'start', ...size(), ...clientPrefs() });
         started = true;
         if (term) {
           term.write('\r\n\x1b[33mreconnected\x1b[0m\r\n');
@@ -151,6 +180,21 @@ export function initTerminalClient(containerId, closeBtnId) {
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
         if (msg.op === 'ping') { send({ op: 'pong' }); return; }
+        if (msg.op === 'hl') {
+          try {
+            if (localStorage.getItem('shrc-beep') === '1') {
+              const ctx = new (window.AudioContext || window.webkitAudioContext)();
+              const o = ctx.createOscillator();
+              const g = ctx.createGain();
+              o.frequency.value = 880;
+              g.gain.value = 0.05;
+              o.connect(g); g.connect(ctx.destination);
+              o.start();
+              o.stop(ctx.currentTime + 0.08);
+            }
+          } catch {}
+          return;
+        }
         if (msg.op === 'out' && term) term.write(msg.data);
       });
       socket.addEventListener('close', () => {
@@ -187,6 +231,10 @@ export function initTerminalClient(containerId, closeBtnId) {
         attributes: true,
         attributeFilter: ['class', 'data-theme']
       });
+      document.getElementById('font-select')?.addEventListener('change', () => {
+        clientPrefs();
+        emitSize();
+      });
     }
   }
 
@@ -206,7 +254,7 @@ export function initTerminalClient(containerId, closeBtnId) {
       whenOpen(() => {
         const s = size();
         if (!started) {
-          send({ op: 'start', ...s });
+          send({ op: 'start', ...s, ...clientPrefs() });
           started = true;
         } else {
           send({ op: 'resize', ...s });

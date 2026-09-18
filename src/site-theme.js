@@ -24,6 +24,14 @@ export function applyCrt(on) {
   try { localStorage.setItem('shrc-crt', on ? '1' : '0'); } catch {}
 }
 
+export function applyFont(px) {
+  const n = Math.min(22, Math.max(11, parseInt(px, 10) || 13));
+  try { localStorage.setItem('shrc-font', String(n)); } catch {}
+  const sel = document.getElementById('font-select');
+  if (sel) sel.value = String(n);
+  return n;
+}
+
 export function initAppearance() {
   let theme = 'phosphor';
   let crt = true;
@@ -40,4 +48,30 @@ export function initAppearance() {
   document.getElementById('crt-toggle-btn')?.addEventListener('click', () => {
     applyCrt(!document.body.classList.contains('crt-active'));
   });
+
+  const fontSel = document.getElementById('font-select');
+  if (fontSel) {
+    let fs = '13';
+    try { fs = localStorage.getItem('shrc-font') || '13'; } catch {}
+    fontSel.value = fs;
+    fontSel.addEventListener('change', () => applyFont(fontSel.value));
+  }
+  const clockSel = document.getElementById('clock-select');
+  if (clockSel) {
+    let c = '24';
+    try { c = localStorage.getItem('shrc-clock') || '24'; } catch {}
+    clockSel.value = c;
+    clockSel.addEventListener('change', () => {
+      try { localStorage.setItem('shrc-clock', clockSel.value); } catch {}
+    });
+  }
+  const beepEl = document.getElementById('beep-toggle');
+  if (beepEl) {
+    let on = false;
+    try { on = localStorage.getItem('shrc-beep') === '1'; } catch {}
+    beepEl.checked = on;
+    beepEl.addEventListener('change', () => {
+      try { localStorage.setItem('shrc-beep', beepEl.checked ? '1' : '0'); } catch {}
+    });
+  }
 }

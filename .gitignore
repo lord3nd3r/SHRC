@@ -1,6 +1,8 @@
 node_modules/
 data/host_key
 data/db.json
+data/*.sqlite
+data/*.sqlite-journal
 data/*.tmp
 *.log
 .DS_Store

@@ -475,7 +475,11 @@ function operServ(irc, client, buffer, text) {
       'AKILL LIST',
       'GLOBAL <text>                     message all users',
       'MODE <#chan> <modes>              force channel modes',
-      'OPER ADD|DEL <nick>               grant/revoke oper'
+      'OPER ADD|DEL <nick>               grant/revoke oper',
+      'MOTD                              show motd',
+      'MOTD ADD <line>                   append a motd line',
+      'MOTD CLEAR                        reset to default',
+      'Join #ops for the public kick/akill/mode log'
     ]);
   }
   if (!client.oper) return fail(S, 'Access denied.');
@@ -506,6 +510,29 @@ function operServ(irc, client, buffer, text) {
       if (sub === 'add') return irc.exec(client, buffer, '/opergrant ' + args[1]);
       if (sub === 'del') return irc.exec(client, buffer, '/deoper ' + args[1]);
       return fail(S, 'Syntax: OPER ADD|DEL <nick>');
+    }
+    case 'motd': {
+      const sub = lower(args[0]);
+      if (!sub) {
+        const lines = (state.settings.motd && state.settings.motd.length)
+          ? state.settings.motd
+          : ['(default motd)'];
+        return notices(S, ['- motd -', ...lines]);
+      }
+      if (sub === 'clear') {
+        state.settings.motd = [];
+        state.onChange();
+        return notices(S, ['MOTD reset to default.']);
+      }
+      if (sub === 'add') {
+        const line = rest.slice(args[0].length).trim();
+        if (!line) return fail(S, 'Syntax: MOTD ADD <line>');
+        if (!state.settings.motd) state.settings.motd = [];
+        state.settings.motd.push(line);
+        state.onChange();
+        return notices(S, [`MOTD line added (${state.settings.motd.length}).`]);
+      }
+      return fail(S, 'Syntax: MOTD | MOTD ADD <line> | MOTD CLEAR');
     }
     default:
       return fail(S, 'Unknown command. /os help');

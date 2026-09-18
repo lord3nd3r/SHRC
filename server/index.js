@@ -125,6 +125,12 @@ wss.on('connection', (ws, req) => {
       if (session) session.destroy();
       virtualStream.columns = msg.cols || 90;
       virtualStream.rows = msg.rows || 30;
+      const id = String(msg.clientId || '').replace(/[^0-9a-f]/gi, '').slice(0, 32);
+      webUser.fingerprint = id.length >= 16 ? 'web:' + id : webUser.fingerprint;
+      webUser.username = msg.nick || null;
+      webUser.hour12 = !!msg.hour12;
+      webUser.beep = !!msg.beep;
+      virtualStream.beep = () => send(ws, { op: 'hl' });
       session = new TUISession(virtualStream, webUser);
       session.handleResize(virtualStream.columns, virtualStream.rows);
     } else if (msg.op === 'in') {

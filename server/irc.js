@@ -6,15 +6,22 @@ const RESERVED = new Set(['nickserv', 'chanserv', 'operserv', 'memoserv', 'botse
 const FLOOD_WINDOW_MS = 5000;
 const FLOOD_MAX = 8;
 const ENFORCE_MS = 30000;
-const MOTD = [
-  'welcome to shrc',
-  'guests are Guest######. ssh Frank@host claims Frank.',
-  'your ssh key auto-identifies a registered nick bound to it.',
-  'else /nick End3r then /identify (30 seconds) or you get renamed.',
-  'services: /ns /cs /ms /os /bs /hs',
-  '/cs register  to keep founder/op/voice across reconnects.',
-  '/help for the rest.  /quit or Ctrl+C to leave.'
-];
+function defaultMotd() {
+  return [
+    'welcome to shrc',
+    'guests are Guest######. ssh Frank@host claims Frank.',
+    'your key or web id auto-identifies a nick bound to it.',
+    'else /nick then /identify (30 seconds) or you get renamed.',
+    'services: /ns /cs /ms /os /bs /hs   /watch  /ignore',
+    '/cs register  to keep founder/op/voice across reconnects.',
+    '/help for the rest.  /quit or Ctrl+C to leave.'
+  ];
+}
+
+function currentMotd() {
+  const lines = state.settings?.motd;
+  return Array.isArray(lines) && lines.length ? lines : defaultMotd();
+}
 
 function lower(s) {
   return String(s || '').toLowerCase();
@@ -36,6 +43,12 @@ function identFromFp(fp) {
 
 export function isSshKeyFingerprint(fp) {
   return String(fp || '').startsWith('SHA256:');
+}
+
+export function isStickyFingerprint(fp) {
+  const s = String(fp || '');
+  if (isSshKeyFingerprint(s)) return true;
+  return /^web:[0-9a-f]{16,}$/i.test(s);
 }
 
 function cloakHost(client) {
@@ -175,7 +188,7 @@ export class IrcNetwork {
 
   accountByFingerprint(fingerprint) {
     const fp = String(fingerprint || '');
-    if (!isSshKeyFingerprint(fp)) return null;
+    if (!isStickyFingerprint(fp)) return null;
     const hits = Object.values(state.accounts).filter((a) => a.fingerprint === fp);
     if (!hits.length) return null;
     return hits.sort((a, b) => (a.registeredAt || 0) - (b.registeredAt || 0))[0];
@@ -226,10 +239,11 @@ export class IrcNetwork {
 
     const fp = fingerprint || 'anon:' + crypto.randomBytes(4).toString('hex');
     const bound = this.accountByFingerprint(fp);
+    const remembered = (!bound && fp.startsWith('web:') && state.webNicks[fp]) ? state.webNicks[fp] : null;
 
     const client = {
       id,
-      nick: this.guestNick(bound ? bound.nickname : nick),
+      nick: this.guestNick(bound ? bound.nickname : (nick || remembered)),
       fingerprint: fp,
       ip: ip || '0.0.0.0',
       ident: identFromFp(fp),
@@ -241,6 +255,7 @@ export class IrcNetwork {
       oper: false,
       away: null,
       ignores: new Set(),
+      watch: new Set(),
       connectedAt: Date.now(),
       lastActive: Date.now(),
       onKill: typeof onKill === 'function' ? onKill : () => {}
@@ -268,7 +283,7 @@ export class IrcNetwork {
         extraNotices.push({
           type: 'notice',
           author: 'NickServ',
-          text: `SSH key recognized. You are identified as ${bound.nickname}.`,
+          text: `Identity recognized. You are identified as ${bound.nickname}.`,
           timestamp: Date.now()
         });
       }
@@ -288,12 +303,62 @@ export class IrcNetwork {
     state.stats.totalConnections++;
     state.scheduleSave();
     const nickserv = client.identified ? extraNotices : extraNotices.concat(this.syncEnforce(client));
-    return { banned: false, client, motd: MOTD, nickserv };
+    if (client.identified) this.loadAccountPrefs(client);
+    this.notifyWatchers(client, true);
+    return { banned: false, client, motd: currentMotd(), nickserv };
+  }
+
+  loadAccountPrefs(client) {
+    const acc = state.getAccount(client.account);
+    if (!acc) return;
+    client.ignores = new Set((acc.ignores || []).map(lower));
+    client.watch = new Set((acc.watch || []).map(lower));
+  }
+
+  persistPrefs(client) {
+    if (!client.identified) return;
+    const acc = state.getAccount(client.account);
+    if (!acc) return;
+    acc.ignores = [...(client.ignores || [])];
+    acc.watch = [...(client.watch || [])];
+    state.scheduleSave();
+  }
+
+  notifyWatchers(client, online) {
+    if (client.isBot) return;
+    const nick = lower(client.nick);
+    const accName = client.account ? lower(client.account) : nick;
+    for (const other of this.clients.values()) {
+      if (other === client || other.isBot) continue;
+      const watched = other.watch instanceof Set
+        ? other.watch
+        : new Set();
+      if (!watched.has(nick) && !watched.has(accName)) continue;
+      this.pushService(other, 'NickServ', [
+        online
+          ? `${client.nick} is online.`
+          : `${client.nick} is offline (${client.away || 'quit'}).`
+      ]);
+    }
+  }
+
+  opsLog(text) {
+    state.ensureChannel('#ops');
+    const ch = state.channels['#ops'];
+    ch.registered = true;
+    ch.modes.n = true;
+    ch.modes.t = true;
+    state.addChatMessage('#ops', 'OperServ', 'bot:operserv', text, { type: 'notice' });
   }
 
   disconnect(id, reason = 'Quit') {
     const client = this.clients.get(id);
     if (!client) return;
+    this.notifyWatchers(client, false);
+    if (String(client.fingerprint).startsWith('web:') && client.nick) {
+      state.webNicks[client.fingerprint] = client.nick;
+      state.scheduleSave();
+    }
     this.clearEnforce(client);
     const chans = [...client.channels];
     for (const ch of chans) {
@@ -857,7 +922,20 @@ export class IrcNetwork {
     if (target.startsWith('query:') || (target[0] !== '#' && target !== '*server*')) {
       const destNick = target.startsWith('query:') ? queryPeer(target, client.nick) : target;
       const dest = this.findNick(destNick);
-      if (!dest) return fail(`No such nick: ${destNick}`);
+      if (!dest) {
+        if (state.isNickProtected(destNick) && type === 'privmsg') {
+          state.addMemo(destNick, client.nick, body);
+          const room = pmRoom(client.nick, destNick);
+          client.queries.add(destNick);
+          state.addChatMessage(room, client.nick, client.fingerprint, body, { type });
+          return ok({
+            openQuery: destNick,
+            switchBuffer: room,
+            status: `${destNick} is offline. Memo sent (they will see it after /identify).`
+          });
+        }
+        return fail(`No such nick: ${destNick}`);
+      }
       if (dest.ignores.has(lower(client.nick))) return ok({ status: 'Message sent.' });
       const room = pmRoom(client.nick, dest.nick);
       client.queries.add(dest.nick);
@@ -911,6 +989,7 @@ export class IrcNetwork {
     this._announce(key, 'kick', client.nick, `${target.nick} was kicked from ${key} by ${client.nick} (${why})`, {
       fingerprint: client.fingerprint
     });
+    this.opsLog(`${client.nick} kicked ${target.nick} from ${key} (${why})`);
     target.channels.delete(key);
     state.onChange();
     return ok({ status: `Kicked ${target.nick} from ${key}` });
@@ -946,6 +1025,7 @@ export class IrcNetwork {
     }
     if (!silent) {
       this.announceMode(key, client.nick, `${give ? '+' : '-'}${letter} ${name}`, client.fingerprint);
+      this.opsLog(`${client.nick} sets ${give ? '+' : '-'}${letter} ${name} on ${key}`);
       state.onChange();
     }
     const word = { o: 'op', v: 'voice', h: 'halfop', a: 'admin' }[letter] || letter;
@@ -1087,6 +1167,7 @@ export class IrcNetwork {
     }
     target.onKill(`You were killed by ${client.nick}: ${why}`);
     this.disconnect(target.id, 'Killed: ' + why);
+    this.opsLog(`${client.nick} killed ${nick} (${why})`);
     return ok({ status: `Killed ${nick}` });
   }
 
@@ -1117,6 +1198,7 @@ export class IrcNetwork {
       v.onKill(`You are banned from shrc (${ban.reason})`);
       this.disconnect(v.id, 'Banned: ' + ban.reason);
     }
+    this.opsLog(`${client.nick} k-line ${type}=${ban.value} (${ban.reason})`);
     return ok({ status: `K-line added: ${type}=${ban.value} (${ban.reason})` });
   }
 
@@ -1208,8 +1290,10 @@ export class IrcNetwork {
           '/list                 list channels',
           '/away [msg]           set or clear away',
           '/invite <nick> [#ch]  invite someone',
-          '/ignore <nick>        ignore a nick',
-          '/unignore <nick>',
+          '/ignore <nick>        ignore a nick (saved if identified)',
+          '/unignore <nick>      /ignore with no args lists',
+          '/watch +nick|-nick    notify when they sign on/off',
+          '/set clock 12|24      /set beep on|off',
           '/motd  /ping  /clear  /cycle',
           '--- services (Anope-style) ---',
           '/ns /nickserv         REGISTER IDENTIFY GHOST INFO AJOIN SET',
@@ -1302,10 +1386,20 @@ export class IrcNetwork {
       case 'q': {
         if (!args[0]) return fail('Usage: /query <nick>');
         const dest = this.findNick(args[0]);
-        if (!dest) return fail(`No such nick: ${args[0]}`);
-        const room = pmRoom(client.nick, dest.nick);
-        client.queries.add(dest.nick);
-        dest.queries.add(client.nick);
+        const other = dest ? dest.nick : args[0];
+        const room = pmRoom(client.nick, other);
+        client.queries.add(other);
+        if (dest) dest.queries.add(client.nick);
+        if (!dest) {
+          const registered = state.isNickProtected(other);
+          return ok({
+            switchBuffer: room,
+            openQuery: other,
+            status: registered
+              ? `${other} is offline. /msg ${other} text sends a memo.`
+              : `${other} is not online.`
+          });
+        }
         return ok({ switchBuffer: room, openQuery: dest.nick, status: `Query with ${dest.nick}` });
       }
 
@@ -1396,14 +1490,51 @@ export class IrcNetwork {
       }
 
       case 'ignore':
-        if (!args[0]) return fail('Usage: /ignore <nick>');
+        if (!args[0]) {
+          const list = [...(client.ignores || [])];
+          return list.length ? infoLines(list.map((n) => `ignore ${n}`)) : ok({ status: 'Ignore list empty.' });
+        }
         client.ignores.add(lower(args[0]));
+        this.persistPrefs(client);
         return ok({ status: `Ignoring ${args[0]}` });
 
       case 'unignore':
         if (!args[0]) return fail('Usage: /unignore <nick>');
         client.ignores.delete(lower(args[0]));
+        this.persistPrefs(client);
         return ok({ status: `No longer ignoring ${args[0]}` });
+
+      case 'watch':
+      case 'notify': {
+        if (!client.watch) client.watch = new Set();
+        if (!args[0]) {
+          const list = [...client.watch];
+          return list.length ? infoLines(list.map((n) => `watch ${n}`)) : ok({ status: 'Watch list empty. /watch +nick' });
+        }
+        let name = args[0];
+        let add = true;
+        if (name.startsWith('+')) { add = true; name = name.slice(1); }
+        else if (name.startsWith('-')) { add = false; name = name.slice(1); }
+        if (!name) return fail('Usage: /watch +nick  or  /watch -nick');
+        if (add) client.watch.add(lower(name));
+        else client.watch.delete(lower(name));
+        this.persistPrefs(client);
+        return ok({ status: add ? `Watching ${name}` : `No longer watching ${name}` });
+      }
+
+      case 'set': {
+        const what = lower(args[0]);
+        const val = lower(args[1] || '');
+        if (what === 'clock') {
+          client.hour12 = val === '12';
+          return ok({ status: `Clock set to ${client.hour12 ? '12-hour' : '24-hour'}.` });
+        }
+        if (what === 'beep') {
+          client.beep = !/^(off|0|false|no)$/i.test(val || 'on');
+          return ok({ status: `Mention beep ${client.beep ? 'on' : 'off'}.` });
+        }
+        return fail('Usage: /set clock 12|24   /set beep on|off');
+      }
 
       case 'clear':
         return { ...ok({ status: 'Buffer cleared locally.' }), clear: true };
@@ -1424,7 +1555,7 @@ export class IrcNetwork {
           const acc = state.getAccount(client.nick);
           client.oper = !!(acc && acc.isOper);
           this.clearEnforce(client);
-          if (acc && isSshKeyFingerprint(client.fingerprint)) acc.fingerprint = client.fingerprint;
+          if (acc && isStickyFingerprint(client.fingerprint)) acc.fingerprint = client.fingerprint;
         }
         return res.success ? ok({ status: res.message }) : fail(res.message);
       }
@@ -1439,10 +1570,11 @@ export class IrcNetwork {
           client.oper = !!(res.account && res.account.isOper);
           this.clearEnforce(client);
           const extra = [];
-          if (isSshKeyFingerprint(client.fingerprint)) {
+          if (isStickyFingerprint(client.fingerprint)) {
             res.account.fingerprint = client.fingerprint;
-            extra.push('This SSH key is now bound to your nick. Reconnect will auto-identify.');
+            extra.push('This identity is now bound to your nick. Reconnect will auto-identify.');
           }
+          this.loadAccountPrefs(client);
           for (const ch of [...client.channels]) this.applyAccess(client, ch);
           const ajoin = res.account.ajoin || [];
           for (const ch of ajoin) {
@@ -1476,7 +1608,7 @@ export class IrcNetwork {
         client.account = args[0];
         client.oper = !!(res.account && res.account.isOper);
         this.clearEnforce(client);
-        if (res.account && isSshKeyFingerprint(client.fingerprint)) res.account.fingerprint = client.fingerprint;
+        if (res.account && isStickyFingerprint(client.fingerprint)) res.account.fingerprint = client.fingerprint;
         return this.changeNick(client, args[0]);
       }
 
@@ -1614,6 +1746,7 @@ export class IrcNetwork {
         if (!state.setOper(args[0], true)) return fail('That nick is not registered.');
         const t = this.findNick(args[0]);
         if (t && t.identified && lower(t.nick) === lower(args[0])) t.oper = true;
+        this.opsLog(`${client.nick} opergrant ${args[0]}`);
         return ok({ status: `${args[0]} is now a network oper (they must /identify).` });
       }
 
