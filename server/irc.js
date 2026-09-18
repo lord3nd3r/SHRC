@@ -41,6 +41,15 @@ function identFromFp(fp) {
   return (cleaned.slice(-12) || 'anon').slice(0, 12);
 }
 
+function safeIdent(s) {
+  const cleaned = String(s || 'user').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 12);
+  return cleaned || 'user';
+}
+
+function safeRealname(s) {
+  return String(s || 'anon').replace(/[\r\n]/g, ' ').slice(0, 80) || 'anon';
+}
+
 export function isSshKeyFingerprint(fp) {
   return String(fp || '').startsWith('SHA256:');
 }
@@ -65,7 +74,7 @@ function cloakHost(client) {
 export function hostmask(client, viewer) {
   const showReal = !!(viewer && viewer.oper && !client?.isBot);
   const host = showReal ? (client.ip || '0.0.0.0') : cloakHost(client);
-  return `${client.nick}!${client.ident}@${host}`;
+  return `${client.nick}!${safeIdent(client.ident)}@${host}`;
 }
 
 function matchMask(mask, client) {
@@ -405,6 +414,34 @@ export class IrcNetwork {
 
   findNick(nick) {
     return this.nicks.get(lower(nick)) || null;
+  }
+
+  whoisDetails(target, viewer) {
+    const t = typeof target === 'string' ? this.findNick(target) : target;
+    if (!t) return null;
+    const operView = !!(viewer && viewer.oper && !t.isBot);
+    const ident = safeIdent(t.ident);
+    const cloak = cloakHost(t);
+    const ip = t.ip || '0.0.0.0';
+    return {
+      nick: t.nick,
+      ident,
+      host: cloak,
+      cloak,
+      ip: operView ? ip : null,
+      realname: safeRealname(t.realname),
+      account: t.identified ? t.account : null,
+      identified: !!t.identified,
+      oper: !!t.oper,
+      away: t.away || null,
+      via: t.via || 'ssh',
+      fingerprint: operView ? (t.fingerprint || '') : null,
+      channels: [...t.channels].map((ch) => this.prefix(t, ch) + ch),
+      idle: Math.max(0, Math.floor((Date.now() - (t.lastActive || t.connectedAt || Date.now())) / 1000)),
+      signon: Math.floor((t.connectedAt || Date.now()) / 1000),
+      connectedFor: Math.max(0, Math.floor((Date.now() - (t.connectedAt || Date.now())) / 1000)),
+      isBot: !!t.isBot
+    };
   }
 
   members(channel) {
@@ -930,7 +967,6 @@ export class IrcNetwork {
       ? `Topic for ${channel}: ${ch.topic} (set by ${ch.topicBy})`
       : `No topic is set for ${channel}`;
     extra.push({ type: 'server', author: 'shrc', text: topicLine, timestamp: Date.now() });
-    extra.push({ type: 'server', author: 'shrc', text: `Names: ${this.nicklist(channel).map((n) => n.prefix + n.nick).join(' ')}`, timestamp: Date.now() });
     if (ch.registered && ch.settings.entrymsg) {
       extra.push({ type: 'notice', author: 'ChanServ', text: `[${channel}] ${ch.settings.entrymsg}`, timestamp: Date.now() });
     }
@@ -1619,21 +1655,28 @@ export class IrcNetwork {
 
       case 'whois': {
         const nick = args[0] || client.nick;
-        const t = this.findNick(nick);
-        if (!t) return fail(`No such nick: ${nick}`);
-        const chans = [...t.channels].map((ch) => this.prefix(t, ch) + ch).join(' ');
-        const idle = Math.floor((Date.now() - t.lastActive) / 1000);
+        const w = this.whoisDetails(nick, client);
+        if (!w) return fail(`No such nick: ${nick}`);
+        const dur = (s) => {
+          if (s < 60) return s + 's';
+          if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+          return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+        };
         const lines = [
-          `${t.nick} (${hostmask(t)})`,
-          `channels: ${chans || '(none)'}`,
-          t.identified ? `identified as ${t.account}` : 'not identified',
-          t.oper ? 'is a network operator' : 'is a regular user',
-          t.away ? `away: ${t.away}` : 'not away',
-          `idle ${idle}s, signed on ${Math.floor((Date.now() - t.connectedAt) / 1000)}s ago`
+          `${w.nick} (${w.ident}@${client.oper && w.ip ? w.ip : w.host})`,
+          `real name: ${w.realname}`,
+          `channels: ${w.channels.join(' ') || '(none)'}`,
+          w.identified ? `identified as ${w.account}` : 'not identified',
+          w.oper ? 'is a network operator' : 'is a regular user',
+          `via ${w.via}`,
+          w.away ? `away: ${w.away}` : 'not away',
+          `idle ${dur(w.idle)}, connected ${dur(w.connectedFor)}`
         ];
-        if (client.oper) {
-          lines.push(`ip ${t.ip || 'unknown'}  cloak ${cloakHost(t)}`);
-          lines.push(`fp ${t.fingerprint}`);
+        if (client.oper && !w.isBot) {
+          lines.push(`ip ${w.ip || 'unknown'}`);
+          lines.push(`cloak ${w.cloak}`);
+          lines.push(`fingerprint ${w.fingerprint || '(none)'}`);
+          lines.push(`signon ${new Date(w.signon * 1000).toISOString()}`);
         }
         return infoLines(lines);
       }

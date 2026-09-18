@@ -113,11 +113,14 @@ export class TUISession {
     this.beepOn = !!userKey.beep;
     this.useMouse = userKey.mouse === true;
 
+    const via = userKey.via || (String(this.fingerprint).startsWith('web:') || userKey.noMouse ? 'web' : 'ssh');
     const joined = irc.connect({
       id: this.sessionId,
       nick: userKey.username,
       fingerprint: this.fingerprint,
       ip: this.ip,
+      via,
+      realname: userKey.realname || (via === 'web' ? 'web' : 'anon'),
       onKill: (reason) => this.forceQuit(reason)
     });
 

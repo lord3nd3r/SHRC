@@ -337,17 +337,36 @@ class IrcWire {
       const chan = args[0] || [...c.channels][0];
       if (chan) {
         for (const n of irc.nicklist(chan)) {
-          const u = irc.findNick(n.nick);
-          this.numeric('352', `${chan} ${u?.ident || 'user'} ${u ? hostmask(u, c).split('@')[1] : '*'} ${SERVER} ${n.nick} H${n.prefix}`, '0 ' + (u?.realname || ''));
+          const w = irc.whoisDetails(n.nick, c);
+          this.numeric('352', `${chan} ${w?.ident || 'user'} ${w?.host || '*'} ${SERVER} ${n.nick} H${n.prefix}`, '0 ' + (w?.realname || ''));
         }
       }
       this.numeric('315', args[0] || '', 'End of /WHO list');
       return;
     }
     if (cmd === 'WHOIS') {
-      const res = irc.exec(c, [...c.channels][0] || '*server*', '/whois ' + (args[0] || ''));
-      for (const line of res.lines || []) this.numeric('311', args[0] || '', line.text);
-      this.numeric('318', args[0] || this.nick, 'End of /WHOIS');
+      const want = args[args.length - 1] || args[0] || '';
+      const w = irc.whoisDetails(want, c);
+      if (!w) {
+        this.numeric('401', want || '*', 'No such nick/channel');
+        this.numeric('318', want || this.nick, 'End of /WHOIS list');
+        return;
+      }
+      this.numeric('311', `${w.nick} ${w.ident} ${w.host} *`, w.realname);
+      this.numeric('312', `${w.nick} ${SERVER}`, 'shrc');
+      if (w.channels.length) this.numeric('319', w.nick, w.channels.join(' '));
+      if (w.identified && w.account) this.numeric('330', `${w.nick} ${w.account}`, 'is logged in as');
+      if (w.oper) this.numeric('313', w.nick, 'is a network operator');
+      if (w.away) this.numeric('301', w.nick, w.away);
+      this.numeric('317', `${w.nick} ${w.idle} ${w.signon}`, 'seconds idle, signon time');
+      this.numeric('320', w.nick, `is connected via ${w.via}`);
+      this.numeric('671', w.nick, 'is using a secure connection');
+      if (c.oper && !w.isBot) {
+        if (w.ip) this.numeric('338', `${w.nick} ${w.ident}@${w.ip} ${w.ip}`, 'actually using host');
+        if (w.fingerprint) this.numeric('320', w.nick, `fingerprint ${w.fingerprint}`);
+        this.numeric('320', w.nick, `cloak ${w.cloak}`);
+      }
+      this.numeric('318', w.nick, 'End of /WHOIS list');
       return;
     }
     if (cmd === 'LIST') {

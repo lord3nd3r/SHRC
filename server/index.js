@@ -113,7 +113,7 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
-  const webUser = { username: null, fingerprint, ip, noMouse: true };
+  const webUser = { username: null, fingerprint, ip, noMouse: true, via: 'web', realname: 'web' };
   const virtualStream = { writable: true, columns: 90, rows: 30 };
   attachStream(ws, virtualStream);
 
