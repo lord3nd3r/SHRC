@@ -85,9 +85,27 @@ function send(ws, obj) {
   if (ws.readyState === 1) ws.send(JSON.stringify(obj));
 }
 
+const webSessions = new Map();
+
+function attachStream(ws, stream) {
+  stream.write = (data) => {
+    const s = typeof data === 'string' ? data : Buffer.from(data).toString('utf8');
+    const CHUNK = 3072;
+    for (let i = 0; i < s.length; i += CHUNK) {
+      send(ws, { op: 'out', data: s.slice(i, i + CHUNK) });
+    }
+  };
+  stream.end = () => {
+    send(ws, { op: 'out', data: '\r\n' });
+    try { ws.close(); } catch {}
+  };
+  stream.disconnectSocket = () => { try { ws.close(); } catch {} };
+  stream.beep = () => send(ws, { op: 'hl' });
+}
+
 wss.on('connection', (ws, req) => {
   const ip = clientIp(req);
-  const fingerprint = 'web:' + crypto.randomBytes(6).toString('hex');
+  let fingerprint = 'web:' + crypto.randomBytes(6).toString('hex');
   const ban = irc.checkBan({ fingerprint, ip, nick: '' });
   if (ban) {
     send(ws, { op: 'out', data: `\r\n banned from shrc (${ban.reason})\r\n` });
@@ -95,63 +113,77 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
-  const webUser = { username: null, fingerprint, ip };
-
-  const virtualStream = {
-    writable: true,
-    columns: 90,
-    rows: 30,
-    write: (data) => {
-      send(ws, { op: 'out', data: typeof data === 'string' ? data : Buffer.from(data).toString('utf8') });
-    },
-    end: () => {
-      send(ws, { op: 'out', data: '\r\n' });
-      ws.close();
-    },
-    disconnectSocket: () => ws.close()
-  };
+  const webUser = { username: null, fingerprint, ip, noMouse: true };
+  const virtualStream = { writable: true, columns: 90, rows: 30 };
+  attachStream(ws, virtualStream);
 
   let session = null;
+  let sessionKey = null;
   const heartbeat = setInterval(() => {
-    if (ws.readyState === 1) {
-      try { ws.ping(); } catch {}
-      send(ws, { op: 'ping' });
-    }
-  }, 15000);
+    if (ws.readyState === 1) send(ws, { op: 'ping' });
+  }, 20000);
 
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(String(raw)); } catch { return; }
     if (msg.op === 'ping' || msg.op === 'pong') return;
     if (msg.op === 'start') {
-      if (session) session.destroy();
       virtualStream.columns = msg.cols || 90;
       virtualStream.rows = msg.rows || 30;
       const id = String(msg.clientId || '').replace(/[^0-9a-f]/gi, '').slice(0, 32);
-      webUser.fingerprint = id.length >= 16 ? 'web:' + id : webUser.fingerprint;
+      if (id.length >= 16) {
+        fingerprint = 'web:' + id;
+        webUser.fingerprint = fingerprint;
+      }
       webUser.username = msg.nick || null;
       webUser.hour12 = !!msg.hour12;
       webUser.beep = !!msg.beep;
-      virtualStream.beep = () => send(ws, { op: 'hl' });
-      webUser.noMouse = true;
+      attachStream(ws, virtualStream);
+
+      const held = webSessions.get(fingerprint);
+      if (held?.session?.alive) {
+        held.ws = ws;
+        session = held.session;
+        session.stream = virtualStream;
+        attachStream(ws, virtualStream);
+        session.handleResize(virtualStream.columns, virtualStream.rows);
+        sessionKey = fingerprint;
+        webSessions.set(fingerprint, { session, ws, stream: virtualStream });
+        return;
+      }
+      if (session) session.destroy();
       session = new TUISession(virtualStream, webUser);
       session.handleResize(virtualStream.columns, virtualStream.rows);
+      sessionKey = fingerprint;
+      webSessions.set(fingerprint, { session, ws, stream: virtualStream });
     } else if (msg.op === 'in') {
       if (session && session.alive) session.handleInput(Buffer.from(msg.data || '', 'utf8'));
     } else if (msg.op === 'resize') {
-      virtualStream.columns = msg.cols;
-      virtualStream.rows = msg.rows;
-      if (session && session.alive) session.handleResize(msg.cols, msg.rows);
+      const cols = parseInt(msg.cols, 10) || virtualStream.columns;
+      const rows = parseInt(msg.rows, 10) || virtualStream.rows;
+      if (cols === virtualStream.columns && rows === virtualStream.rows) return;
+      virtualStream.columns = cols;
+      virtualStream.rows = rows;
+      if (session && session.alive) session.handleResize(cols, rows);
     }
   });
 
   const drop = () => {
     clearInterval(heartbeat);
-    if (session) session.destroy();
-    session = null;
+    const key = sessionKey;
+    const held = key && webSessions.get(key);
+    if (held && held.ws === ws) {
+      setTimeout(() => {
+        const now = webSessions.get(key);
+        if (now && now.ws === ws) {
+          if (now.session) now.session.destroy();
+          webSessions.delete(key);
+        }
+      }, 20000);
+    }
   };
   ws.on('close', drop);
-  ws.on('error', drop);
+  ws.on('error', () => {});
 });
 
 irc.bootBots();

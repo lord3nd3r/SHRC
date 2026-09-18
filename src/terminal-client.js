@@ -76,6 +76,10 @@ export function initTerminalClient(containerId, closeBtnId) {
   let pingTimer = null;
   let reconnectTimer = null;
   let reconnects = 0;
+  let lastCols = 0;
+  let lastRows = 0;
+  let sizeTimer = null;
+  let closing = false;
 
   function clientPrefs() {
     let clientId = '';
@@ -193,7 +197,19 @@ export function initTerminalClient(containerId, closeBtnId) {
   }
 
   function emitSize() {
-    send({ op: 'resize', ...size() });
+    const s = size();
+    if (s.cols === lastCols && s.rows === lastRows) return;
+    lastCols = s.cols;
+    lastRows = s.rows;
+    send({ op: 'resize', ...s });
+  }
+
+  function emitSizeSoon() {
+    if (sizeTimer) clearTimeout(sizeTimer);
+    sizeTimer = setTimeout(() => {
+      sizeTimer = null;
+      emitSize();
+    }, 200);
   }
 
   function setMax(on) {
@@ -202,7 +218,7 @@ export function initTerminalClient(containerId, closeBtnId) {
     if (maxBtn) maxBtn.textContent = on ? 'restore' : 'max';
     try { localStorage.setItem('shrc-tty-max', on ? '1' : '0'); } catch {}
     requestAnimationFrame(() => {
-      emitSize();
+      emitSizeSoon();
       term?.focus();
     });
   }
@@ -213,7 +229,7 @@ export function initTerminalClient(containerId, closeBtnId) {
 
   function startPing() {
     stopPing();
-    pingTimer = setInterval(() => send({ op: 'ping' }), 15000);
+    pingTimer = setInterval(() => send({ op: 'ping' }), 25000);
   }
 
   function scheduleReconnect() {
@@ -269,7 +285,7 @@ export function initTerminalClient(containerId, closeBtnId) {
       socket.addEventListener('close', () => {
         stopPing();
         started = false;
-        scheduleReconnect();
+        if (!closing) scheduleReconnect();
       });
       socket.addEventListener('error', () => {});
     }
@@ -295,7 +311,7 @@ export function initTerminalClient(containerId, closeBtnId) {
       wireCopyPaste(term);
       window.addEventListener('resize', () => {
         if (!modal?.classList.contains('open')) return;
-        emitSize();
+        emitSizeSoon();
       });
       new MutationObserver(() => applyTheme()).observe(document.body, {
         attributes: true,
@@ -314,6 +330,7 @@ export function initTerminalClient(containerId, closeBtnId) {
   }
 
   window.openWebTerminal = () => {
+    closing = false;
     if (modal) modal.classList.add('open');
     let max = false;
     try { max = localStorage.getItem('shrc-tty-max') === '1'; } catch {}
@@ -323,6 +340,8 @@ export function initTerminalClient(containerId, closeBtnId) {
       applyTheme();
       whenOpen(() => {
         const s = size();
+        lastCols = s.cols;
+        lastRows = s.rows;
         if (!started) {
           send({ op: 'start', ...s, ...clientPrefs() });
           started = true;
@@ -335,6 +354,7 @@ export function initTerminalClient(containerId, closeBtnId) {
   };
 
   function closeModal() {
+    closing = true;
     if (modal) modal.classList.remove('open');
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     stopPing();
