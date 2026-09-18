@@ -123,15 +123,13 @@ your ssh key binds on identify — reconnect comes in already you
   </div>
 
   <div class="terminal-modal-backdrop" id="terminal-modal">
-    <div class="terminal-window">
+    <div class="terminal-window" id="terminal-window">
       <div class="terminal-header">
-        <div class="window-dots">
-          <div class="dot dot-red" id="close-terminal-btn"></div>
-          <div class="dot dot-yellow"></div>
-          <div class="dot dot-green"></div>
+        <span class="term-title">shrc://web-tty</span>
+        <div class="term-actions">
+          <button type="button" class="crt-btn" id="max-terminal-btn" title="maximize">max</button>
+          <button type="button" class="crt-btn" id="close-terminal-btn" title="close">close</button>
         </div>
-        <span class="term-title">shrc · tty</span>
-        <span class="term-hint">esc</span>
       </div>
       <div class="terminal-body">
         <div id="xterm-container"></div>

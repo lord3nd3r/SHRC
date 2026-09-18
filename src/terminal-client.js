@@ -1,7 +1,57 @@
+const THEME_CRT = {
+  background: '#020805',
+  foreground: '#39ff6a',
+  cursor: '#39ff6a',
+  cursorAccent: '#020805',
+  selectionBackground: '#1f8a3a',
+  black: '#020805',
+  red: '#ff5a5a',
+  green: '#39ff6a',
+  yellow: '#d4ff7a',
+  blue: '#7dffd4',
+  magenta: '#c4ff90',
+  cyan: '#7dffd4',
+  white: '#e8ffe8',
+  brightBlack: '#4d8a5c',
+  brightRed: '#ff8080',
+  brightGreen: '#6dff90',
+  brightYellow: '#f0ffb0',
+  brightBlue: '#b0ffe8',
+  brightMagenta: '#dcffb8',
+  brightCyan: '#b8fff0',
+  brightWhite: '#ffffff'
+};
+
+const THEME_SHARP = {
+  background: '#020805',
+  foreground: '#b6f5c3',
+  cursor: '#39ff6a',
+  cursorAccent: '#020805',
+  selectionBackground: '#163d22',
+  black: '#020805',
+  red: '#ff6b6b',
+  green: '#39ff6a',
+  yellow: '#d4ff7a',
+  blue: '#7dffd4',
+  magenta: '#c4ff90',
+  cyan: '#7dffd4',
+  white: '#e8ffe8',
+  brightBlack: '#4d8a5c',
+  brightRed: '#ff8a8a',
+  brightGreen: '#6dff90',
+  brightYellow: '#f0ffb0',
+  brightBlue: '#b0ffe8',
+  brightMagenta: '#dcffb8',
+  brightCyan: '#b8fff0',
+  brightWhite: '#f5fff5'
+};
+
 export function initTerminalClient(containerId, closeBtnId) {
   const container = document.getElementById(containerId);
   const modal = document.getElementById('terminal-modal');
+  const win = document.getElementById('terminal-window');
   const closeBtn = document.getElementById(closeBtnId);
+  const maxBtn = document.getElementById('max-terminal-btn');
   if (!container) return;
 
   let socket = null;
@@ -9,13 +59,36 @@ export function initTerminalClient(containerId, closeBtnId) {
   let fitAddon = null;
   let started = false;
 
+  function crtOn() {
+    return document.body.classList.contains('crt-active');
+  }
+
+  function applyTheme() {
+    if (!term) return;
+    term.options.theme = crtOn() ? THEME_CRT : THEME_SHARP;
+  }
+
   function size() {
     if (term && fitAddon) {
       try { fitAddon.fit(); } catch {}
     }
-    const cols = term?.cols || 90;
-    const rows = term?.rows || 30;
-    return { cols, rows };
+    return { cols: term?.cols || 90, rows: term?.rows || 30 };
+  }
+
+  function emitSize() {
+    if (!socket) return;
+    socket.emit('terminal:resize', size());
+  }
+
+  function setMax(on) {
+    win?.classList.toggle('max', on);
+    modal?.classList.toggle('maxed', on);
+    if (maxBtn) maxBtn.textContent = on ? 'restore' : 'max';
+    try { localStorage.setItem('shrc-tty-max', on ? '1' : '0'); } catch {}
+    requestAnimationFrame(() => {
+      emitSize();
+      term?.focus();
+    });
   }
 
   function ensureSession() {
@@ -27,24 +100,16 @@ export function initTerminalClient(containerId, closeBtnId) {
     }
     if (!term && window.Terminal) {
       term = new window.Terminal({
-        fontFamily: "'Fira Code', ui-monospace, monospace",
+        fontFamily: "'Fira Code', ui-monospace, 'Cascadia Code', Consolas, monospace",
         fontSize: 13,
-        lineHeight: 1.2,
-        theme: {
-          background: '#070b10',
-          foreground: '#c9d1d9',
-          cursor: '#3fb950',
-          green: '#3fb950',
-          cyan: '#58a6ff',
-          yellow: '#d29922',
-          magenta: '#d2a8ff',
-          red: '#f85149',
-          brightGreen: '#56d364'
-        },
-        cursorBlink: false,
+        lineHeight: 1.22,
+        theme: crtOn() ? THEME_CRT : THEME_SHARP,
+        cursorBlink: true,
+        cursorStyle: 'block',
         convertEol: false,
         cols: 100,
-        rows: 32
+        rows: 32,
+        scrollback: 2000
       });
       if (window.FitAddon && window.FitAddon.FitAddon) {
         fitAddon = new window.FitAddon.FitAddon();
@@ -54,16 +119,23 @@ export function initTerminalClient(containerId, closeBtnId) {
       term.onData((data) => socket.emit('terminal:input', data));
       window.addEventListener('resize', () => {
         if (!modal?.classList.contains('open')) return;
-        const s = size();
-        socket.emit('terminal:resize', s);
+        emitSize();
+      });
+      new MutationObserver(() => applyTheme()).observe(document.body, {
+        attributes: true,
+        attributeFilter: ['class']
       });
     }
   }
 
   window.openWebTerminal = () => {
     if (modal) modal.classList.add('open');
+    let max = false;
+    try { max = localStorage.getItem('shrc-tty-max') === '1'; } catch {}
+    setMax(max);
     ensureSession();
     requestAnimationFrame(() => {
+      applyTheme();
       const s = size();
       if (!started) {
         socket.emit('terminal:start', s);
@@ -80,12 +152,23 @@ export function initTerminalClient(containerId, closeBtnId) {
   }
 
   if (closeBtn) closeBtn.addEventListener('click', closeModal);
+  if (maxBtn) {
+    maxBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setMax(!win?.classList.contains('max'));
+    });
+  }
   if (modal) {
     modal.addEventListener('click', (e) => {
       if (e.target === modal) closeModal();
     });
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && modal?.classList.contains('open')) closeModal();
+    if (!modal?.classList.contains('open')) return;
+    if (e.key === 'Escape') closeModal();
+    if (e.key === 'F11') {
+      e.preventDefault();
+      setMax(!win?.classList.contains('max'));
+    }
   });
 }
