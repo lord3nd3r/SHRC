@@ -7,7 +7,7 @@ function lower(s) {
 function sanitize(text, max = 400) {
   return String(text || '')
     .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
+    .replace(/[\x00-\x01\x04-\x08\x0b\x0c\x0e\x10-\x15\x17-\x1c\x1e]/g, '')
     .replace(/\r\n|\n|\r/g, ' ')
     .slice(0, max);
 }

@@ -65,7 +65,7 @@ function matchMask(mask, client) {
 function sanitize(text, max = 400) {
   return String(text || '')
     .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
+    .replace(/[\x00-\x01\x04-\x08\x0b\x0c\x0e\x10-\x15\x17-\x1c\x1e]/g, '')
     .replace(/\r\n|\n|\r/g, ' ')
     .slice(0, max);
 }
@@ -336,11 +336,11 @@ export class IrcNetwork {
 
   isOp(client, channel) {
     if (client.oper) return true;
-    if (state.isNickProtected(client.nick) && !client.identified) return false;
     const ch = state.channels[normalizeChannel(channel)];
     if (!ch) return false;
     const ln = lower(client.nick);
     if (ch.ops.includes(ln) || (ch.admins || []).includes(ln)) return true;
+    if (state.isNickProtected(client.nick) && !client.identified) return false;
     return this.accessRank(client, channel) >= 30;
   }
 
@@ -349,6 +349,7 @@ export class IrcNetwork {
     const ch = state.channels[normalizeChannel(channel)];
     if (!ch) return false;
     if ((ch.halfops || []).includes(lower(client.nick))) return true;
+    if (state.isNickProtected(client.nick) && !client.identified) return false;
     return this.accessRank(client, channel) >= 20;
   }
 
@@ -357,6 +358,7 @@ export class IrcNetwork {
     const ch = state.channels[normalizeChannel(channel)];
     if (!ch) return false;
     if (ch.voices.includes(lower(client.nick))) return true;
+    if (state.isNickProtected(client.nick) && !client.identified) return false;
     return this.accessRank(client, channel) >= 10;
   }
 
@@ -372,26 +374,53 @@ export class IrcNetwork {
     return '';
   }
 
+  setLive(ch, nickLower, letter, give) {
+    const map = { o: 'ops', v: 'voices', h: 'halfops', a: 'admins' };
+    const arr = map[letter];
+    if (!arr || !ch) return;
+    if (!ch[arr]) ch[arr] = [];
+    const ln = lower(nickLower);
+    if (give) {
+      if (!ch[arr].includes(ln)) ch[arr].push(ln);
+    } else {
+      ch[arr] = ch[arr].filter((n) => n !== ln);
+    }
+  }
+
+  mutateFlags(ch, nickLower, spec) {
+    const ln = lower(nickLower);
+    let cur = ch.flags[ln] || '';
+    let adding = String(spec).startsWith('-') ? false : true;
+    for (const c of String(spec).toUpperCase()) {
+      if (c === '+') { adding = true; continue; }
+      if (c === '-') { adding = false; continue; }
+      if (!'FAOHV'.includes(c)) continue;
+      if (adding) {
+        if (!cur.includes(c)) cur += c;
+      } else {
+        cur = cur.split(c).join('');
+      }
+    }
+    if (cur) ch.flags[ln] = cur;
+    else delete ch.flags[ln];
+    return cur;
+  }
+
+  announceMode(channel, by, spec, fingerprint) {
+    this._announce(channel, 'mode', by, `mode/${channel} [${spec}] by ${by}`, { fingerprint: fingerprint || 'shrc' });
+  }
+
   applyAccess(client, channel) {
     const key = normalizeChannel(channel);
     const ch = state.ensureChannel(key);
-    const ln = lower(client.identified ? client.account || client.nick : client.nick);
-    const drop = (arr) => {
-      ch[arr] = (ch[arr] || []).filter((n) => n !== ln && n !== lower(client.nick));
-    };
-    drop('ops'); drop('voices'); drop('halfops'); drop('admins');
     if (!ch.registered) return;
     if (ch.settings.secure && !client.identified) return;
+    const ln = lower(client.identified ? client.account || client.nick : client.nick);
     const flags = ch.flags[ln] || '';
-    const add = (arr) => {
-      if (!ch[arr].includes(ln)) ch[arr].push(ln);
-    };
-    if (flags.includes('F') || flags.includes('A')) add('admins');
-    if (flags.includes('F') || flags.includes('A') || flags.includes('O')) add('ops');
-    if (flags.includes('H')) add('halfops');
-    if (flags.includes('V') || flags.includes('O') || flags.includes('A') || flags.includes('F') || flags.includes('H')) {
-      if (flags.includes('V')) add('voices');
-    }
+    if (flags.includes('F') || flags.includes('A')) this.setLive(ch, ln, 'a', true);
+    if (flags.includes('F') || flags.includes('A') || flags.includes('O')) this.setLive(ch, ln, 'o', true);
+    if (flags.includes('H')) this.setLive(ch, ln, 'h', true);
+    if (flags.includes('V')) this.setLive(ch, ln, 'v', true);
     if (flags.includes('F')) ch.founder = ln;
   }
 
@@ -403,8 +432,11 @@ export class IrcNetwork {
     if (my < 40 && !client.oper) return fail('You need SOP/founder (A/F) to edit flags.');
     const ln = lower(nick);
     if (!isValidNick(nick) && !ln) return fail('Invalid nick.');
-    let cur = ch.flags[ln] || '';
+    const target = this.findNick(nick);
+    const live = [];
+    const letter = { F: 'a', A: 'a', O: 'o', H: 'h', V: 'v' };
     let adding = String(spec).startsWith('-') ? false : true;
+    let cur = ch.flags[ln] || '';
     for (const c of String(spec).toUpperCase()) {
       if (c === '+') { adding = true; continue; }
       if (c === '-') { adding = false; continue; }
@@ -415,15 +447,19 @@ export class IrcNetwork {
       if (adding) {
         if (!cur.includes(c)) cur += c;
       } else {
-        cur = cur.replace(c, '');
+        cur = cur.split(c).join('');
         if (c === 'F' && ch.founder === ln) ch.founder = lower(client.account || '');
+      }
+      const mode = letter[c];
+      if (mode) {
+        if (target && target.channels.has(key)) this.setLive(ch, ln, mode, adding);
+        live.push((adding ? '+' : '-') + mode + ' ' + (target ? target.nick : nick));
       }
     }
     if (cur) ch.flags[ln] = cur;
     else delete ch.flags[ln];
-    const target = this.findNick(nick);
-    if (target && target.channels.has(key)) this.applyAccess(target, key);
-    this._announce(key, 'mode', 'ChanServ', `ChanServ sets flags ${spec} ${nick} on ${key}`, { fingerprint: 'chanserv' });
+    if (live.length) this.announceMode(key, client.nick, live.join(' '), client.fingerprint);
+    else this.announceMode(key, client.nick, `${spec} ${nick}`, client.fingerprint);
     state.onChange();
     return ok({ status: `${nick} flags on ${key}: +${ch.flags[ln] || '(none)'}` });
   }
@@ -598,7 +634,7 @@ export class IrcNetwork {
       case 'hop':
       case 'halfop':
         if (!need(40)) return;
-        this.setFlags(client, channel, targetNick, '+H');
+        this.setHop(client, channel, targetNick, true);
         return;
       case 'kick':
         if (!need(30)) return;
@@ -823,7 +859,10 @@ export class IrcNetwork {
     if (!client.isBot && state.isNickProtected(client.nick) && !client.identified) {
       return fail(`Nick '${client.nick}' is registered. /identify <password> to speak.`);
     }
-    state.addChatMessage(channel, client.nick, client.fingerprint, body, { type });
+    state.addChatMessage(channel, client.nick, client.fingerprint, body, {
+      type,
+      extra: { prefix: this.prefix(client, channel) }
+    });
     if (type === 'privmsg' && body.startsWith('!')) this.handleFantasy(client, channel, body);
     return ok();
   }
@@ -863,60 +902,51 @@ export class IrcNetwork {
     return ok({ status: `Kicked ${target.nick} from ${key}` });
   }
 
-  setOp(client, channel, nick, give) {
+  setStatus(client, channel, nick, letter, give, { silent } = {}) {
     const key = normalizeChannel(channel);
-    if (!this.isOp(client, key)) {
-      return fail(`You're not a channel operator on ${key}. A current op must /op you first.`);
+    const need = letter === 'v' ? 30 : 30;
+    if (letter === 'o' || letter === 'h' || letter === 'a') {
+      if (!this.isOp(client, key)) {
+        return fail(`You're not a channel operator on ${key}. A current op must /op you first.`);
+      }
+    } else if (!this.isOp(client, key) && !this.isHalfop(client, key)) {
+      return fail(`You're not a channel operator on ${key}.`);
     }
+    void need;
     const target = this.findNick(nick);
     const name = target ? target.nick : nick;
     if (!isValidNick(name)) return fail('Invalid nick.');
     if (give && target && !target.channels.has(key)) return fail(`${name} is not on ${key}.`);
     const ch = state.ensureChannel(key);
     const ln = lower(name);
-    const had = ch.ops.includes(ln);
-    if (give && had) return ok({ status: `${name} is already op on ${key}` });
-    if (!give && !had) return ok({ status: `${name} is not op on ${key}` });
-    if (give) {
-      if (!ch.ops.includes(ln)) ch.ops.push(ln);
-      ch.voices = ch.voices.filter((n) => n !== ln);
-    } else {
-      if (ln === ch.founder && !client.oper && lower(client.nick) !== ln) {
-        return fail("You can't deop the channel founder (network oper can).");
-      }
-      ch.ops = ch.ops.filter((n) => n !== ln);
+    if (letter === 'o' && !give && ln === ch.founder && !client.oper && lower(client.nick) !== ln) {
+      return fail("You can't deop the channel founder (network oper can).");
     }
+    this.setLive(ch, ln, letter, give);
     if (ch.registered && this.accessRank(client, key) >= 40) {
-      this.setFlags(client, key, name, give ? '+O' : '-O');
+      const flag = { o: 'O', v: 'V', h: 'H', a: 'A' }[letter];
+      if (flag) this.mutateFlags(ch, ln, (give ? '+' : '-') + flag);
     }
-    this._announce(key, 'mode', client.nick, `${client.nick} sets mode ${give ? '+o' : '-o'} ${name} on ${key}`, {
-      fingerprint: client.fingerprint
+    if (!silent) {
+      this.announceMode(key, client.nick, `${give ? '+' : '-'}${letter} ${name}`, client.fingerprint);
+      state.onChange();
+    }
+    const word = { o: 'op', v: 'voice', h: 'halfop', a: 'admin' }[letter] || letter;
+    return ok({
+      status: give ? `${name} is now ${word} on ${key}` : `${name} is no longer ${word} on ${key}`
     });
-    state.onChange();
-    return ok({ status: give ? `${name} is now a channel operator on ${key}` : `${name} is no longer a channel operator on ${key}` });
   }
 
-  setVoice(client, channel, nick, give) {
-    const key = normalizeChannel(channel);
-    if (!this.isOp(client, key)) return fail(`You're not a channel operator on ${key}.`);
-    const target = this.findNick(nick);
-    const name = target ? target.nick : nick;
-    if (give && target && !target.channels.has(key)) return fail(`${name} is not on ${key}.`);
-    const ch = state.ensureChannel(key);
-    const ln = lower(name);
-    if (give) {
-      if (!ch.voices.includes(ln)) ch.voices.push(ln);
-    } else {
-      ch.voices = ch.voices.filter((n) => n !== ln);
-    }
-    if (ch.registered && this.accessRank(client, key) >= 40) {
-      this.setFlags(client, key, name, give ? '+V' : '-V');
-    }
-    this._announce(key, 'mode', client.nick, `${client.nick} sets mode ${give ? '+v' : '-v'} ${name} on ${key}`, {
-      fingerprint: client.fingerprint
-    });
-    state.onChange();
-    return ok({ status: give ? `Voiced ${name} on ${key}` : `Devoiced ${name} on ${key}` });
+  setOp(client, channel, nick, give, opts) {
+    return this.setStatus(client, channel, nick, 'o', give, opts);
+  }
+
+  setVoice(client, channel, nick, give, opts) {
+    return this.setStatus(client, channel, nick, 'v', give, opts);
+  }
+
+  setHop(client, channel, nick, give, opts) {
+    return this.setStatus(client, channel, nick, 'h', give, opts);
   }
 
   ban(client, channel, mask, reason, add = true) {
@@ -928,7 +958,7 @@ export class IrcNetwork {
     if (add) {
       if (ch.bans.some((b) => lower(b.mask) === lower(resolved))) return ok({ status: `Ban already exists on ${key}` });
       ch.bans.push({ mask: resolved, setBy: client.nick, setAt: Date.now(), reason: sanitize(reason, 80) });
-      this._announce(key, 'mode', client.nick, `${client.nick} sets mode +b ${resolved} on ${key}`, { fingerprint: client.fingerprint });
+      this.announceMode(key, client.nick, `+b ${resolved}`, client.fingerprint);
       if (target && target.channels.has(key) && !target.oper) {
         this._announce(key, 'kick', client.nick, `${target.nick} was kicked from ${key} by ${client.nick} (banned)`, { fingerprint: client.fingerprint });
         target.channels.delete(key);
@@ -939,7 +969,7 @@ export class IrcNetwork {
     const before = ch.bans.length;
     ch.bans = ch.bans.filter((b) => lower(b.mask) !== lower(resolved) && lower(b.mask) !== lower(mask));
     if (ch.bans.length === before) return fail(`No matching ban on ${key}. Try /mode ${key} +b`);
-    this._announce(key, 'mode', client.nick, `${client.nick} sets mode -b ${resolved} on ${key}`, { fingerprint: client.fingerprint });
+    this.announceMode(key, client.nick, `-b ${resolved}`, client.fingerprint);
     state.onChange();
     return ok({ status: `Unbanned ${resolved} from ${key}` });
   }
@@ -1002,12 +1032,16 @@ export class IrcNetwork {
         }
       } else if (c === 'o') {
         const n = args[argi++];
-        if (n) this.setOp(client, key, n, adding);
+        if (n) this.setOp(client, key, n, adding, { silent: true });
         applied.push((adding ? '+o ' : '-o ') + (n || ''));
       } else if (c === 'v') {
         const n = args[argi++];
-        if (n) this.setVoice(client, key, n, adding);
+        if (n) this.setVoice(client, key, n, adding, { silent: true });
         applied.push((adding ? '+v ' : '-v ') + (n || ''));
+      } else if (c === 'h') {
+        const n = args[argi++];
+        if (n) this.setHop(client, key, n, adding, { silent: true });
+        applied.push((adding ? '+h ' : '-h ') + (n || ''));
       } else if (c === 'b') {
         const m = args[argi++];
         if (adding && !m) {
@@ -1019,7 +1053,7 @@ export class IrcNetwork {
       }
     }
     if (applied.length) {
-      this._announce(key, 'mode', client.nick, `${client.nick} sets mode ${applied.join(' ')} on ${key}`, { fingerprint: client.fingerprint });
+      this.announceMode(key, client.nick, applied.join(' '), client.fingerprint);
       state.onChange();
     }
     return ok({ status: applied.length ? `Mode ${key} ${applied.join(' ')}` : `Mode ${key}` });
@@ -1149,6 +1183,7 @@ export class IrcNetwork {
           '/query <nick>         open a query window',
           '/notice <tgt> <text>  send a notice',
           '/me <action>          emote in the current channel',
+          'Ctrl+K color  Ctrl+B bold  Ctrl+U underline  Ctrl+O reset',
           '/topic [#chan] [text] view or set topic',
           '/names [#chan]        list nicks',
           '/who [#chan]          who is here',
@@ -1471,13 +1506,13 @@ export class IrcNetwork {
       case 'hop':
       case 'halfop': {
         if (!args[0]) return fail('Usage: /hop <nick>');
-        return handleService(this, client, currentBuffer, 'ChanServ', 'HALFOP ' + args[0]);
+        return this.setHop(client, currentBuffer, args[0], true);
       }
 
       case 'dehop':
       case 'dehalfop': {
         if (!args[0]) return fail('Usage: /dehop <nick>');
-        return handleService(this, client, currentBuffer, 'ChanServ', 'DEHALFOP ' + args[0]);
+        return this.setHop(client, currentBuffer, args[0], false);
       }
 
       case 'kick': {

@@ -1,5 +1,6 @@
 import { state } from './state.js';
 import { irc, queryPeer } from './irc.js';
+import { mircToAnsi, wrapMirc } from './mirc.js';
 
 const ANSI = {
   clear: '\x1b[2J\x1b[H',
@@ -201,7 +202,7 @@ export class TUISession {
         this.lastCount.set(b, n);
       }
     }
-    if (this.scrollOffset === 0) this.render();
+    this.render();
   }
 
   destroy() {
@@ -284,6 +285,16 @@ export class TUISession {
     if (raw === '\x10') { this.cycleBuffer(-1); return; }
     if (raw === '\x0e') { this.cycleBuffer(1); return; }
     if (raw === '\t') { this.tabComplete(); return; }
+    if (raw === '\x0b') {
+      this.chatInput += '\x03';
+      this.statusMessage = ANSI.yellow + 'color: 0-15  optional ,bg  e.g. Ctrl+K 4 = red. Ctrl+O reset' + ANSI.reset;
+      this.render();
+      return;
+    }
+    if (raw === '\x02') { this.chatInput += '\x02'; this.render(); return; }
+    if (raw === '\x0f') { this.chatInput += '\x0f'; this.render(); return; }
+    if (raw === '\x12' || raw === '\x16') { this.chatInput += '\x16'; this.render(); return; }
+    if (raw === '\x15' || raw === '\x1f') { this.chatInput += '\x1f'; this.render(); return; }
 
     this.handleChatInput(raw);
   }
@@ -382,7 +393,7 @@ export class TUISession {
     }
     if (key === '\x7f' || key === '\x08') {
       this.chatInput = this.chatInput.slice(0, -1);
-    } else if (key.length === 1 && key >= ' ') {
+    } else if (key.length === 1 && (key >= ' ' || key === '\x02' || key === '\x03' || key === '\x0f' || key === '\x16' || key === '\x1d' || key === '\x1f')) {
       this.chatInput += key;
     }
     this.render();
@@ -408,7 +419,7 @@ export class TUISession {
       const type = m.type || 'privmsg';
       if (type === 'join' || type === 'part' || type === 'quit' || type === 'nick' || type === 'mode' || type === 'kick' || type === 'topic' || type === 'server') {
         const color = type === 'kick' ? ANSI.red : type === 'topic' || type === 'mode' ? ANSI.yellow : ANSI.gray;
-        const wrapped = wrapText(m.text, Math.max(16, centerWidth - 10));
+        const wrapped = wrapText(String(m.text || '').replace(/[\x02\x03\x0f\x16\x1d\x1f]/g, ''), Math.max(16, centerWidth - 10));
         wrapped.forEach((w, i) => {
           const nickCol = i === 0 ? ANSI.dim + padLeft('*', nickWidth) + ANSI.reset : ' '.repeat(nickWidth);
           lines.push(`${i === 0 ? time : '     '} ${nickCol} ${color}${w}${ANSI.reset}`);
@@ -434,13 +445,15 @@ export class TUISession {
       const hl = m.text && m.text.toLowerCase().includes(myL);
       const isSelf = String(m.author).toLowerCase() === myL;
       const online = this.client && buffer.startsWith('#') ? irc.findNick(m.author) : null;
-      const prefix = online ? irc.prefix(online, buffer) : '';
+      const prefix = (m.extra && m.extra.prefix != null)
+        ? m.extra.prefix
+        : (online ? irc.prefix(online, buffer) : '');
       const nickColor = isSelf ? ANSI.brightGreen : hl ? ANSI.brightYellow : ANSI.cyan;
       const nickStr = padLeft((prefix || '') + m.author, nickWidth);
-      const wrapped = wrapText(m.text, textWidth);
+      const wrapped = wrapMirc(m.text, textWidth);
       wrapped.forEach((w, i) => {
         const nickCol = i === 0 ? ANSI.bold + nickColor + nickStr + ANSI.reset : ' '.repeat(nickWidth);
-        const body = hl ? ANSI.brightYellow + w + ANSI.reset : ANSI.white + w + ANSI.reset;
+        const body = hl ? ANSI.brightYellow + w + ANSI.reset : w;
         lines.push(`${i === 0 ? time : '     '} ${nickCol} ${body}`);
       });
     }
@@ -558,11 +571,11 @@ export class TUISession {
       : ANSI.gray + ` [${hhmm(Date.now())}] ${modeStr} ${nNicks ? nNicks + ' nicks' : ''} │ ${topic}` + ANSI.reset;
     lines.push(topicLine.slice(0, this.cols + 32));
 
-    const shownInput = maskInput(this.chatInput);
+    const shownInput = mircToAnsi(maskInput(this.chatInput));
     const chanTag = displayBufferName(buf, nick);
     const opMark = c && buf && buf.startsWith('#') ? (irc.prefix(c, buf) || '') : '';
     lines.push(ANSI.bold + ANSI.green + `[${opMark}${chanTag}]` + ANSI.reset + ' ' + shownInput + ANSI.brightGreen + '▋' + ANSI.reset);
-    lines.push(ANSI.gray + ' ^C quit · pgup/pgdn scroll · /op nick · /deop nick · /help' + ANSI.reset);
+    lines.push(ANSI.gray + ' ^C quit · ^K color · ^B bold · ^U uline · ^O reset · /help' + ANSI.reset);
 
     let out = ANSI.hideCursor + ANSI.moveTo(1, 1);
     lines.slice(0, this.rows).forEach((line, i) => {
