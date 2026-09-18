@@ -350,8 +350,15 @@ class IrcWire {
       return;
     }
     if (cmd === 'LIST') {
-      const res = irc.exec(c, '*server*', '/list');
-      for (const line of res.lines || []) this.numeric('322', '', line.text);
+      this.numeric('321', 'Channel', 'Users  Name');
+      const want = (args[0] || '').toLowerCase();
+      for (const ch of Object.values(state.channels)) {
+        if (!ch?.name || !ch.name.startsWith('#')) continue;
+        if (ch.modes?.s && !c.channels.has(ch.name) && !c.oper) continue;
+        if (want && !ch.name.toLowerCase().includes(want.replace(/\*/g, ''))) continue;
+        const n = irc.members(ch.name).filter((u) => !u.isBot).length;
+        this.numeric('322', `${ch.name} ${n}`, ch.topic || '');
+      }
       this.numeric('323', '', 'End of /LIST');
       return;
     }
