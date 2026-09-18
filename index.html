@@ -38,16 +38,16 @@
        services  ns cs ms os bs hs   <span class="ok">UP</span>
 ready.</pre>
 
-    <button class="cmd-box cmd-box-accent" type="button" data-copy="ssh localhost -p 2222">
+    <button class="cmd-box cmd-box-accent" type="button" id="ssh-copy-btn" data-copy="ssh localhost -p 2222">
       <div class="cmd-row">
         <div class="cmd-text">
           <span class="cmd-prompt">$</span>
-          <span>ssh localhost -p 2222</span>
+          <span id="ssh-cmd">ssh localhost -p 2222</span>
           <span class="cursor-blink">█</span>
         </div>
         <span class="copy-badge">copy</span>
       </div>
-      <div class="cmd-sub">openssh. no password. ssh frank@host to claim a nick.</div>
+      <div class="cmd-sub">openssh. no password. ssh nick@host to claim a nick.</div>
     </button>
 
     <button class="cmd-box" type="button" onclick="window.openWebTerminal()">
@@ -85,7 +85,7 @@ your ssh key binds on identify — reconnect comes in already you
     <div class="os-grid">
       <div class="feature-card">
         <div class="feature-title">linux / macOS</div>
-        <div class="feature-desc"><code>ssh HOST -p 2222</code><br>openssh is already there.</div>
+        <div class="feature-desc"><code class="ssh-host-cmd">ssh HOST -p 2222</code><br>openssh is already there.</div>
       </div>
       <div class="feature-card">
         <div class="feature-title">windows</div>
@@ -104,11 +104,11 @@ your ssh key binds on identify — reconnect comes in already you
       <div class="cmd-sub">keys, first host prompt, powershell optional-features, termux, blink</div>
     </a>
 
-    <button class="cmd-box" type="button" data-copy="curl -fsSL https://shrc.live/install.sh | bash">
+    <button class="cmd-box" type="button" id="install-copy-btn" data-copy="curl -fsSL https://shrc.live/install.sh | bash">
       <div class="cmd-row">
         <div class="cmd-text">
           <span class="cmd-prompt">$</span>
-          <span>curl -fsSL https://shrc.live/install.sh | bash</span>
+          <span id="install-cmd">curl -fsSL https://shrc.live/install.sh | bash</span>
         </div>
         <span class="copy-badge">copy</span>
       </div>
@@ -149,6 +149,22 @@ your ssh key binds on identify — reconnect comes in already you
     }
 
     document.addEventListener('DOMContentLoaded', () => {
+      const host = location.hostname && location.hostname !== '127.0.0.1'
+        ? location.hostname
+        : 'localhost';
+      const sshCmd = `ssh ${host} -p 2222`;
+      const origin = location.origin || `http://${host}`;
+      const installCmd = `curl -fsSL ${origin}/install.sh | bash`;
+      const sshEl = document.getElementById('ssh-cmd');
+      const sshBtn = document.getElementById('ssh-copy-btn');
+      if (sshEl) sshEl.textContent = sshCmd;
+      if (sshBtn) sshBtn.setAttribute('data-copy', sshCmd);
+      document.querySelectorAll('.ssh-host-cmd').forEach((el) => { el.textContent = sshCmd; });
+      const insEl = document.getElementById('install-cmd');
+      const insBtn = document.getElementById('install-copy-btn');
+      if (insEl) insEl.textContent = installCmd;
+      if (insBtn) insBtn.setAttribute('data-copy', installCmd);
+
       initTerminalClient('xterm-container', 'close-terminal-btn');
 
       let crt = true;
