@@ -111,7 +111,9 @@ export class TUISession {
     this.banned = false;
     this.hour12 = !!userKey.hour12;
     this.beepOn = !!userKey.beep;
-    this.useMouse = userKey.mouse === true;
+    // SSH: mouse on by default (click buffers/nicks). Web sets noMouse and
+    // synthesizes clicks itself. /set mouse off restores terminal drag-select.
+    this.useMouse = userKey.mouse === true || (userKey.mouse !== false && userKey.noMouse !== true);
 
     const via = userKey.via || (String(this.fingerprint).startsWith('web:') || userKey.noMouse ? 'web' : 'ssh');
     const joined = irc.connect({
@@ -266,7 +268,9 @@ export class TUISession {
   handleResize(cols, rows) {
     this.cols = cols || 120;
     this.rows = rows || 32;
-    this.write(ANSI.clear);
+    // Many terminals drop DEC mouse modes on window-change (e.g. font +/-).
+    // Re-arm tracking so hitTargets keep receiving SGR clicks.
+    this.write((this.useMouse ? ANSI.enableMouse : '') + ANSI.clear);
     this.render();
   }
 
@@ -497,10 +501,22 @@ export class TUISession {
 
   render() {
     if (!this.alive) return;
-    const leftWidth = 20;
-    const rightWidth = String(this.activeBuffer).startsWith('#') ? 18 : 0;
-    const centerWidth = Math.max(36, this.cols - leftWidth - rightWidth - (rightWidth ? 2 : 1));
-    const totalRows = Math.max(16, this.rows);
+    // Layout must fit the real PTY. Forcing min center/rows made hitTargets
+    // diverge from what was drawn after font+/- shrunk cols/rows.
+    let leftWidth = 20;
+    let rightWidth = String(this.activeBuffer).startsWith('#') ? 18 : 0;
+    let gaps = rightWidth ? 2 : 1;
+    let centerWidth = this.cols - leftWidth - rightWidth - gaps;
+    if (centerWidth < 20 && rightWidth) {
+      rightWidth = 0;
+      gaps = 1;
+      centerWidth = this.cols - leftWidth - gaps;
+    }
+    if (centerWidth < 8) {
+      leftWidth = Math.max(8, this.cols - gaps - 8);
+      centerWidth = Math.max(1, this.cols - leftWidth - gaps);
+    }
+    const totalRows = Math.max(1, this.rows);
     this.hitTargets = [];
 
     const c = this.client;
@@ -552,7 +568,7 @@ export class TUISession {
 
     const buf = this.activeBuffer;
     const msgs = this.formatMessages(buf, centerWidth);
-    const maxContentRows = totalRows - 6;
+    const maxContentRows = Math.max(1, totalRows - 6);
     const maxScroll = Math.max(0, msgs.length - maxContentRows);
     this.scrollOffset = Math.min(this.scrollOffset, maxScroll);
     const end = msgs.length - this.scrollOffset;
@@ -562,7 +578,7 @@ export class TUISession {
       centerCol.push(ANSI.yellow + ` ↑ ${this.scrollOffset} more (pgdn to follow)` + ANSI.reset);
     }
 
-    if (String(buf).startsWith('#') && c) {
+    if (String(buf).startsWith('#') && c && rightWidth > 0) {
       rightCol.push(ANSI.dim + ANSI.gray + ' names' + ANSI.reset);
       irc.nicklist(buf).forEach((n, idx) => {
         const pcol = n.prefix === '~' || n.prefix === '@' ? ANSI.green
@@ -610,7 +626,9 @@ export class TUISession {
     const chanTag = displayBufferName(buf, nick);
     const opMark = c && buf && buf.startsWith('#') ? (irc.prefix(c, buf) || '') : '';
     lines.push(ANSI.bold + ANSI.green + `[${opMark}${chanTag}]` + ANSI.reset + ' ' + shownInput + ANSI.brightGreen + '▋' + ANSI.reset);
-    lines.push(ANSI.gray + '/quit /exit · drag-select copy · ^C clear · ^K color · /help' + ANSI.reset);
+    lines.push(ANSI.gray + (this.useMouse
+      ? '/quit · click buffers/nicks · shift-drag copy · /set mouse off · /help'
+      : '/quit · /set mouse on to click · drag-select copy · /help') + ANSI.reset);
 
     let out = ANSI.hideCursor + ANSI.moveTo(1, 1);
     lines.slice(0, this.rows).forEach((line, i) => {
