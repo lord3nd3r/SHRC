@@ -1,6 +1,6 @@
 # shrc
 
-[![Donate - PayPal](https://img.shields.io/badge/Donate-PayPal-0070ba?style=for-the-badge&logo=paypal&logoColor=white)](https://3nd3r.net/paypal) [![Donate - BTC](https://img.shields.io/badge/Donate-BTC-f7931a?style=for-the-badge&logo=bitcoin&logoColor=white)](https://3nd3r.net/btc)
+[![Donate - PayPal](https://img.shields.io/badge/Donate-PayPal-0070ba?style=for-the-badge&logo=paypal&logoColor=white)](https://3nd3r.net/paypal) [![Donate - Cash App](https://img.shields.io/badge/Donate-Cash%20App-00d632?style=for-the-badge&logo=cashapp&logoColor=white)](https://3nd3r.net/cashapp) [![Donate - Venmo](https://img.shields.io/badge/Donate-Venmo-008cff?style=for-the-badge&logo=venmo&logoColor=white)](https://3nd3r.net/venmo) [![Donate - BTC](https://img.shields.io/badge/Donate-BTC-f7931a?style=for-the-badge&logo=bitcoin&logoColor=white)](https://3nd3r.net/btc)
 
 shrc is an **SSH clubhouse**. You `ssh` in (or open the web tty) and you are in a shared terminal: channels, nicks, ops, services. Guests are allowed. There is no signup form.
 
